@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.06.2';
+    public const APP_VERSION    = '2026.07.07.1';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -923,6 +923,9 @@ final class ScrambleDecoder
 
 final class JmService
 {
+    private const LOCAL_LIST_PAGE_SIZE = 20;
+    private const SOURCE_LIST_PAGE_SIZE = 80;
+
     private JmApiClient $api;
     private MemoryCache $cache;
 
@@ -940,23 +943,24 @@ final class JmService
 
     public function fetchLatestList(int $page): JmListResult
     {
-        $resp = $this->api->callJson(JmConfig::ENDPOINT_LATEST, ['page' => (string) $page]);
+        $window = self::sourceListWindow($page);
+        $resp = $this->api->callJson(JmConfig::ENDPOINT_LATEST, ['page' => (string) $window['source_page']]);
         $payload = is_array($resp['data']) ? $resp['data'] : [];
-        return $this->listResultFromItems('latest', $page, $payload, 0);
+        return $this->windowedListResultFromItems('latest', $page, $payload, 0, $window);
     }
 
     public function fetchPopularList(int $page): JmListResult
     {
-        $sourcePage = max(0, $page - 1);
+        $window = self::sourceListWindow($page);
         $resp = $this->api->callJson(JmConfig::ENDPOINT_CATEGORY_FILTER, [
-            'page' => (string) $sourcePage,
+            'page' => (string) $window['source_page'],
             'c'    => 'latest',
-            'o'    => 'mv',
+            'o'    => 'new',
         ]);
         $payload = is_array($resp['data']) ? $resp['data'] : [];
         $items = isset($payload['content']) && is_array($payload['content']) ? $payload['content'] : [];
         $total = self::intFromPayload($payload['total'] ?? 0);
-        return $this->listResultFromItems('popular', $page, $items, $total);
+        return $this->windowedListResultFromItems('popular', $page, $items, $total, $window);
     }
 
     public function searchAlbums(string $query, int $page, string $order = 'mr'): JmListResult
@@ -1169,6 +1173,34 @@ final class JmService
         $hasNextPage = $total > 0 ? $loaded < $total : count($mapped) > 0;
 
         return new JmListResult($mode, $page, $total, $hasNextPage, $mapped);
+    }
+
+    /** @return array{source_page:int, offset:int} */
+    private static function sourceListWindow(int $page): array
+    {
+        $start = (max(1, $page) - 1) * self::LOCAL_LIST_PAGE_SIZE;
+        return [
+            'source_page' => intdiv($start, self::SOURCE_LIST_PAGE_SIZE),
+            'offset' => $start % self::SOURCE_LIST_PAGE_SIZE,
+        ];
+    }
+
+    /** @param array{source_page:int, offset:int} $window */
+    private function windowedListResultFromItems(string $mode, int $page, array $items, int $total, array $window): JmListResult
+    {
+        $mapped = [];
+        foreach ($items as $item) {
+            if (is_array($item)) {
+                $mapped[] = JmListItem::fromPayload($item);
+            }
+        }
+
+        $sliced = array_slice($mapped, $window['offset'], self::LOCAL_LIST_PAGE_SIZE);
+        $hasNextPage = $total > 0
+            ? ($page * self::LOCAL_LIST_PAGE_SIZE) < $total
+            : count($mapped) > $window['offset'] + self::LOCAL_LIST_PAGE_SIZE || count($mapped) >= self::SOURCE_LIST_PAGE_SIZE;
+
+        return new JmListResult($mode, $page, $total, $hasNextPage, $sliced);
     }
 
     private static function intFromPayload(mixed $value): int
