@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.06.1';
+    public const APP_VERSION    = '2026.07.06.2';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -940,8 +940,7 @@ final class JmService
 
     public function fetchLatestList(int $page): JmListResult
     {
-        $sourcePage = max(0, $page - 1);
-        $resp = $this->api->callJson(JmConfig::ENDPOINT_LATEST, ['page' => (string) $sourcePage]);
+        $resp = $this->api->callJson(JmConfig::ENDPOINT_LATEST, ['page' => (string) $page]);
         $payload = is_array($resp['data']) ? $resp['data'] : [];
         return $this->listResultFromItems('latest', $page, $payload, 0);
     }
@@ -1454,6 +1453,12 @@ function elapsedMs(float $startNs): int
     return (int) round((hrtime(true) - $startNs) / 1_000_000);
 }
 
+function jmApiVersion(): string
+{
+    $version = getenv('JM_API_VERSION');
+    return is_string($version) && trim($version) !== '' ? trim($version) : JmConfig::APP_VERSION;
+}
+
 function requestBaseUrl(): string
 {
     $proto = $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? null;
@@ -1615,6 +1620,7 @@ ini_set('log_errors', '1');
 set_time_limit(300);
 ignore_user_abort(true);
 header_remove('X-Powered-By');
+header('X-JM-API-Version: ' . jmApiVersion());
 
 // Check extensions
 foreach (['curl', 'openssl', 'json', 'mbstring'] as $ext) {
@@ -1639,14 +1645,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 if (($_GET['health'] ?? '') === '1') {
     $memoryCache = new MemoryCache();
     $report = [
-        'app_version'  => getenv('JM_API_VERSION') ?: JmConfig::APP_VERSION,
+        'app_version'  => jmApiVersion(),
         'php'          => PHP_VERSION,
         'apcu'         => $memoryCache->isAvailable(),
         'apcu_details' => $memoryCache->diagnostics(),
         'redis'        => (new RedisStore())->isAvailable(),
         'memory'       => memory_get_usage(true),
     ];
-    sendJson(['code' => 200, 'success' => true, 'diagnostics' => $report], false);
+    sendJson(['code' => 200, 'success' => true, 'version' => jmApiVersion(), 'diagnostics' => $report], false);
 }
 
 // ── Security: rate limit first ──

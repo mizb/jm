@@ -38,6 +38,7 @@ services:
     ports:
       - "8088:8088"
     environment:
+      JM_API_VERSION: "2026.07.06.2"
       JM_PREFETCH_PAGES: "10"
       JM_PAGE_CACHE_TTL: "3600"
       JM_CHAPTER_CACHE_TTL: "21600"
@@ -66,10 +67,10 @@ docker logs jmcomic-api
 看到类似下面这行，就能判断容器加载的是哪一版：
 
 ```text
-JM API version 2026.07.06.1
+JM API version 2026.07.06.2
 ```
 
-`health=1` 也会返回 `diagnostics.app_version`，可用于接口方式确认当前运行版本。
+`health=1` 会返回顶层 `version` 和 `diagnostics.app_version`。所有响应也会带 `X-JM-API-Version` 头，所以直接 `php -S` 和 Docker 启动都能通过接口确认当前运行版本。
 
 如果 Suwayomi 和本服务在同一个 Docker Compose/network 中，后续 Suwayomi 扩展应访问：
 
@@ -297,7 +298,9 @@ GET /?jmid=350234&chapter=413446
 {
   "code": 200,
   "success": true,
+  "version": "2026.07.06.2",
   "diagnostics": {
+    "app_version": "2026.07.06.2",
     "php": "8.5.7",
     "apcu": true,
     "apcu_details": {
@@ -405,6 +408,7 @@ Redis 不可用时优雅降级 — 不限流。
 ```
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
+X-JM-API-Version: 2026.07.06.2
 X-JM-Cache: HIT|MISS
 X-JM-Image-Codec: webp|jpeg|gif|png|original
 Retry-After: 60         (限流时)
