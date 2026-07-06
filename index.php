@@ -1083,12 +1083,13 @@ final class JmService
     }
 
     /** @return array{chapters: JmChapter[], errors: list<array{photo_id:string, error:string}>} */
-    public function fetchChapters(array $photoIds, string $scrambleId): array
+    public function fetchChapters(array $photoIds): array
     {
         $chapters = [];
         $errors   = [];
         foreach ($photoIds as $pid) {
             try {
+                $scrambleId = $this->fetchScrambleId($pid);
                 $chapters[] = $this->fetchChapter($pid, $scrambleId);
             } catch (\Throwable $e) {
                 $errors[] = ['photo_id' => $pid, 'error' => 'Failed'];
@@ -1127,7 +1128,7 @@ final class JmService
         $image = $chapter->images[$page - 1] ?? null;
 
         if ($image === null) {
-            throw new SecurityException("椤电爜 {$page} 瓒呭嚭鑼冨洿 1-{$chapter->pageCount}", 400);
+            throw new SecurityException("页码 {$page} 超出范围 1-{$chapter->pageCount}", 400);
         }
 
         $cacheKey = self::decodedPageCacheKey($photoId, $page, $image);
@@ -1311,16 +1312,24 @@ final class InputValidator
         }
 
         // Strip "JM" prefix
-        if (preg_match('/^JM(\d+)$/i', $raw, $m)) return $m[1];
+        if (preg_match('/^JM(\d+)$/i', $raw, $m)) return self::normalizeJmId($m[1]);
 
         // Extract from URL
-        if (preg_match('#/(?:album|photo)s?/(\d+)#i', $raw, $m)) return $m[1];
-        if (preg_match('/[?&]id=(\d+)/i', $raw, $m)) return $m[1];
+        if (preg_match('#/(?:album|photo)s?/(\d+)#i', $raw, $m)) return self::normalizeJmId($m[1]);
+        if (preg_match('/[?&]id=(\d+)/i', $raw, $m)) return self::normalizeJmId($m[1]);
 
         // Pure digits
-        if (preg_match('/^(\d+)$/', $raw, $m)) return $m[1];
+        if (preg_match('/^(\d+)$/', $raw, $m)) return self::normalizeJmId($m[1]);
 
         throw new SecurityException('Invalid JM ID', 400);
+    }
+
+    private static function normalizeJmId(string $id): string
+    {
+        if (strlen($id) > JmConfig::JMID_MAX_LENGTH) {
+            throw new SecurityException('Invalid JM ID', 400);
+        }
+        return $id;
     }
 
     /** Validate chapter parameter. */
@@ -1340,6 +1349,9 @@ final class InputValidator
 
         // "@N" index
         if (str_starts_with($param, '@')) {
+            if (!preg_match('/^@\d+$/', $param)) {
+                throw new SecurityException('无效的章节参数', 400);
+            }
             $idx = (int) substr($param, 1);
             $max = count($album->episodes);
             if ($idx < 1 || $idx > $max) {
@@ -1785,8 +1797,7 @@ try {
         sendError(400, $e->getMessage());
     }
 
-    $scrambleId = $service->fetchScrambleId($fetchIds[0]);
-    $result     = $service->fetchChapters($fetchIds, $scrambleId);
+    $result = $service->fetchChapters($fetchIds);
 
     $response = [
         'code'    => 200,

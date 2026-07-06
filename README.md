@@ -69,6 +69,14 @@ http://jmcomic-api:8088
 http://127.0.0.1:8088
 ```
 
+Docker-capable hosts can run the full runtime verifier after deployment (`scripts/runtime-verify.ps1`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\runtime-verify.ps1
+```
+
+The verifier builds and recreates the container, checks `health=1`, album metadata, image cache HIT behavior, `X-JM-Image-Codec`, default prefetch, `prefetch=0`, the absence of `/app/cache`, and that no decoded image files are written under `/app`.
+
 ```bash
 # 拿目录
 curl "http://localhost:8088/?jmid=350234"
@@ -107,7 +115,7 @@ curl "http://localhost:8088/?search=董卓&page=1"
 | ext-openssl | AES-256 解密 |
 | ext-json | JSON 编解码 |
 | ext-mbstring | 多字节字符串 |
-| ext-redis (可选) | 限流 / 缓存加速 |
+| ext-redis (可选) | 限流 / 封禁状态 |
 | ext-gd (可选) | 图片乱序解码 |
 
 ## API 接口
