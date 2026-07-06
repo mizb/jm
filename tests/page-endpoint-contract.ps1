@@ -11,6 +11,8 @@ $requiredSnippets = @(
     'fetchDecodedPage',
     'downloadImage',
     'ScrambleDecoder::decodeBytes',
+    'pageNameForScramble',
+    'pathinfo($clean, PATHINFO_FILENAME)',
     "return ['bytes' => `$bytes, 'mime' => 'image/jpeg']",
     'function requestBaseUrl',
     'function buildDecodedPageUrl',

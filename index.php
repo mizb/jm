@@ -699,10 +699,19 @@ final class ScrambleDecoder
         if ($aid < JmConfig::SCRAMBLE_268850) return 10;
 
         $x = ($aid < JmConfig::SCRAMBLE_421926) ? 10 : 8;
-        $h = md5($aid . $filename);
+        $pageName = self::pageNameForScramble($filename);
+        $h = md5($aid . $pageName);
         $n = ord($h[strlen($h) - 1]) % $x;
 
         return $n * 2 + 2;
+    }
+
+    private static function pageNameForScramble(string $filename): string
+    {
+        $clean = explode('?', str_replace('\\', '/', trim($filename)), 2)[0];
+        $base = basename($clean);
+        $name = pathinfo($clean, PATHINFO_FILENAME);
+        return $name !== '' ? $name : $base;
     }
 
     public static function decodeFile(string $srcPath, int $segments, string $dstPath): bool
