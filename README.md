@@ -52,6 +52,8 @@ volumes:
 ```bash
 curl "http://localhost:8080/?health=1"
 curl "http://localhost:8080/?jmid=350234&format=min"
+curl "http://localhost:8080/?list=latest&page=1&format=min"
+curl "http://localhost:8080/?search=董卓&page=1&format=min"
 ```
 
 如果 Suwayomi 和本服务在同一个 Docker Compose/network 中，后续 Suwayomi 扩展应访问：
@@ -84,6 +86,15 @@ curl "http://localhost:8080/?jmid=350234&chapter=@5"
 
 # 全部章节
 curl "http://localhost:8080/?jmid=350234&chapter=all"
+
+# 最新更新
+curl "http://localhost:8080/?list=latest&page=1"
+
+# 热门列表
+curl "http://localhost:8080/?list=popular&page=1"
+
+# 搜索书名
+curl "http://localhost:8080/?search=董卓&page=1"
 ```
 
 ## 系统要求
@@ -99,6 +110,58 @@ curl "http://localhost:8080/?jmid=350234&chapter=all"
 | ext-gd (可选) | 图片乱序解码 |
 
 ## API 接口
+
+### GET /?list={mode}&page={page}
+
+**返回 Suwayomi 扩展首页/列表数据。**
+
+| 参数 | 示例 | 说明 |
+|------|------|------|
+| `list` | `popular` | 热门列表 |
+| `list` | `latest` | 最新更新 |
+| `page` | `1` | 1-based 分页 |
+
+```
+GET /?list=latest&page=1
+```
+
+响应：
+
+```json
+{
+  "code": 200,
+  "success": true,
+  "data": {
+    "mode": "latest",
+    "page": 1,
+    "total": 0,
+    "has_next_page": true,
+    "items": [
+      {
+        "id": "350234",
+        "name": "董卓 上+下",
+        "author": "",
+        "description": "",
+        "image": "https://cdn-msp.jmapiproxy1.cc/media/albums/350234_3x4.jpg",
+        "tags": [],
+        "likes": 0,
+        "total_views": 0,
+        "updated_at": null
+      }
+    ]
+  }
+}
+```
+
+### GET /?search={keyword}&page={page}
+
+**按书名搜索。**
+
+```
+GET /?search=董卓&page=1
+```
+
+`order`/`o` 可选，默认 `mr`，可传 `mv`、`mp`、`tf`。
 
 ### GET /?jmid={id}
 
@@ -175,7 +238,9 @@ GET /?jmid=350234&chapter=413446
           {
             "index": 1,
             "filename": "00047.webp",
-            "url": "https://cdn-msp.jmapiproxy1.cc/media/photos/413446/00047.webp",
+            "url": "http://localhost:8080/?jmid=350234&chapter=413446&page=1",
+            "source_url": "https://cdn-msp.jmapiproxy1.cc/media/photos/413446/00047.webp",
+            "mime": "image/jpeg",
             "scramble_id": "220980",
             "decode_segments": 10
           }
@@ -194,7 +259,9 @@ GET /?jmid=350234&chapter=413446
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `url` | string | CDN 图片直链 |
+| `url` | string | 可直接显示的 API 解码图片地址 |
+| `source_url` | string | 原始 CDN 图片直链，可能是乱序图 |
+| `mime` | string | `url` 返回的图片 MIME |
 | `scramble_id` | string | 图片解密密钥 |
 | `decode_segments` | int | 行分割段数。`0` = 未加密，`>0` = 需解密 |
 

@@ -32,6 +32,9 @@ final class JmConfig
     public const ENDPOINT_ALBUM    = '/album';
     public const ENDPOINT_CHAPTER  = '/chapter';
     public const ENDPOINT_SCRAMBLE = '/chapter_view_template';
+    public const ENDPOINT_LATEST   = '/latest';
+    public const ENDPOINT_SEARCH   = '/search';
+    public const ENDPOINT_CATEGORY_FILTER = '/categories/filter';
 
     public const SCRAMBLE_220980 = 220980;
     public const SCRAMBLE_268850 = 268850;
@@ -541,14 +544,141 @@ final class JmChapter
         return $self;
     }
 
-    public function toArray(): array
+    public function toArray(?string $albumId = null, ?string $publicBaseUrl = null): array
     {
+        $images = array_map(function (array $image) use ($albumId, $publicBaseUrl): array {
+            $sourceUrl = (string) ($image['url'] ?? '');
+            $page = (int) ($image['index'] ?? 0);
+            $segments = (int) ($image['decode_segments'] ?? 0);
+            $filename = (string) ($image['filename'] ?? 'page.jpg');
+
+            $image['source_url'] = $sourceUrl;
+            $image['mime'] = $segments > 0 ? 'image/jpeg' : self::imageMime($filename);
+
+            if ($albumId !== null && $publicBaseUrl !== null && $page > 0) {
+                $image['url'] = buildDecodedPageUrl($publicBaseUrl, $albumId, $this->photoId, $page);
+            }
+
+            return $image;
+        }, $this->images);
+
         return [
             'photo_id'   => $this->photoId,
             'title'      => $this->title,
             'sort'       => $this->sort,
             'page_count' => $this->pageCount,
-            'images'     => $this->images,
+            'images'     => $images,
+        ];
+    }
+
+    private static function imageMime(string $filename): string
+    {
+        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        return match ($extension) {
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'webp' => 'image/webp',
+            default => 'image/jpeg',
+        };
+    }
+}
+
+
+final class JmListItem
+{
+    public string $id, $name, $author, $description, $image;
+    public array $tags;
+    public int $likes, $totalViews;
+    public ?int $updatedAt;
+
+    private function __construct() {}
+
+    public static function fromPayload(array $item): self
+    {
+        $self = new self();
+        $self->id          = (string) ($item['id'] ?? $item['aid'] ?? $item['AID'] ?? '');
+        $self->name        = InputValidator::sanitizeString((string) ($item['name'] ?? 'JM ' . $self->id));
+        $self->author      = InputValidator::sanitizeString((string) ($item['author'] ?? ''));
+        $self->description = InputValidator::sanitizeString((string) ($item['description'] ?? ''));
+        $self->image       = (string) ($item['image'] ?? '');
+        $self->tags        = self::tagsFromPayload($item);
+        $self->likes       = self::intFromPayload($item['likes'] ?? 0);
+        $self->totalViews  = self::intFromPayload($item['total_views'] ?? $item['totalViews'] ?? 0);
+        $self->updatedAt   = isset($item['update_at']) ? self::intFromPayload($item['update_at']) : null;
+
+        return $self;
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'id'          => $this->id,
+            'name'        => $this->name,
+            'author'      => $this->author,
+            'description' => $this->description,
+            'image'       => buildCoverUrl($this->id, $this->image),
+            'tags'        => $this->tags,
+            'likes'       => $this->likes,
+            'total_views' => $this->totalViews,
+            'updated_at'  => $this->updatedAt,
+        ];
+    }
+
+    private static function tagsFromPayload(array $item): array
+    {
+        $tags = [];
+        foreach (['category', 'category_sub'] as $key) {
+            if (isset($item[$key]) && is_array($item[$key])) {
+                $title = trim((string) ($item[$key]['title'] ?? ''));
+                if ($title !== '' && !in_array($title, $tags, true)) {
+                    $tags[] = InputValidator::sanitizeString($title);
+                }
+            }
+        }
+        foreach (['tags', 'works', 'actors'] as $key) {
+            $values = $item[$key] ?? [];
+            if (!is_array($values)) {
+                $values = [$values];
+            }
+            foreach ($values as $value) {
+                $value = trim((string) $value);
+                if ($value !== '' && !in_array($value, $tags, true)) {
+                    $tags[] = InputValidator::sanitizeString($value);
+                }
+            }
+        }
+        return $tags;
+    }
+
+    private static function intFromPayload(mixed $value): int
+    {
+        if (is_int($value)) return $value;
+        if (is_float($value)) return (int) $value;
+        if (is_string($value) && preg_match('/^\d+$/', trim($value))) return (int) trim($value);
+        return 0;
+    }
+}
+
+
+final class JmListResult
+{
+    /** @param list<JmListItem> $items */
+    public function __construct(
+        public string $mode,
+        public int $page,
+        public int $total,
+        public bool $hasNextPage,
+        public array $items,
+    ) {}
+
+    public function toArray(): array
+    {
+        return [
+            'mode'          => $this->mode,
+            'page'          => $this->page,
+            'total'         => $this->total,
+            'has_next_page' => $this->hasNextPage,
+            'items'         => array_map(fn(JmListItem $item) => $item->toArray(), $this->items),
         ];
     }
 }
@@ -670,6 +800,47 @@ final class JmService
         return JmAlbum::fromApiResponse($resp['data']);
     }
 
+    public function fetchLatestList(int $page): JmListResult
+    {
+        $sourcePage = max(0, $page - 1);
+        $resp = $this->api->callJson(JmConfig::ENDPOINT_LATEST, ['page' => (string) $sourcePage]);
+        $payload = is_array($resp['data']) ? $resp['data'] : [];
+        return $this->listResultFromItems('latest', $page, $payload, 0);
+    }
+
+    public function fetchPopularList(int $page): JmListResult
+    {
+        $sourcePage = max(0, $page - 1);
+        $resp = $this->api->callJson(JmConfig::ENDPOINT_CATEGORY_FILTER, [
+            'page' => (string) $sourcePage,
+            'c'    => 'latest',
+            'o'    => 'mv',
+        ]);
+        $payload = is_array($resp['data']) ? $resp['data'] : [];
+        $items = isset($payload['content']) && is_array($payload['content']) ? $payload['content'] : [];
+        $total = self::intFromPayload($payload['total'] ?? 0);
+        return $this->listResultFromItems('popular', $page, $items, $total);
+    }
+
+    public function searchAlbums(string $query, int $page, string $order = 'mr'): JmListResult
+    {
+        $resp = $this->api->callJson(JmConfig::ENDPOINT_SEARCH, [
+            'page'         => (string) $page,
+            'o'            => $order,
+            'search_query' => $query,
+        ]);
+        $payload = is_array($resp['data']) ? $resp['data'] : [];
+        $items = isset($payload['content']) && is_array($payload['content']) ? $payload['content'] : [];
+        $total = self::intFromPayload($payload['total'] ?? count($items));
+
+        if (empty($items) && !empty($payload['redirect_aid'])) {
+            $items[] = ['id' => (string) $payload['redirect_aid'], 'name' => 'JM ' . $payload['redirect_aid']];
+            $total = max($total, 1);
+        }
+
+        return $this->listResultFromItems('search', $page, $items, $total);
+    }
+
     public function fetchScrambleId(string $photoId): string
     {
         $cacheFile = __DIR__ . '/cache/scramble_' . md5($photoId) . '.txt';
@@ -728,6 +899,30 @@ final class JmService
     }
 
     public function requestCount(): int { return $this->api->requestCount(); }
+
+    private function listResultFromItems(string $mode, int $page, array $items, int $total): JmListResult
+    {
+        $mapped = [];
+        foreach ($items as $item) {
+            if (is_array($item)) {
+                $mapped[] = JmListItem::fromPayload($item);
+            }
+        }
+
+        $pageSize = max(1, count($mapped));
+        $loaded = ($page - 1) * $pageSize + count($mapped);
+        $hasNextPage = $total > 0 ? $loaded < $total : count($mapped) > 0;
+
+        return new JmListResult($mode, $page, $total, $hasNextPage, $mapped);
+    }
+
+    private static function intFromPayload(mixed $value): int
+    {
+        if (is_int($value)) return $value;
+        if (is_float($value)) return (int) $value;
+        if (is_string($value) && preg_match('/^\d+$/', trim($value))) return (int) trim($value);
+        return 0;
+    }
 
     private static function imageExtension(string $filename): string
     {
@@ -972,6 +1167,99 @@ function elapsedMs(float $startNs): int
     return (int) round((hrtime(true) - $startNs) / 1_000_000);
 }
 
+function requestBaseUrl(): string
+{
+    $proto = $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? null;
+    if (!is_string($proto) || $proto === '') {
+        $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    }
+    $proto = strtolower(trim(explode(',', $proto)[0]));
+    if ($proto !== 'https' && $proto !== 'http') {
+        $proto = 'http';
+    }
+
+    $host = $_SERVER['HTTP_X_FORWARDED_HOST'] ?? $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $host = trim(explode(',', (string) $host)[0]);
+    if ($host === '') {
+        $host = 'localhost';
+    }
+
+    $scriptName = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? ''));
+    $basePath = rtrim(dirname($scriptName), '/');
+    if ($basePath === '' || $basePath === '.') {
+        $basePath = '';
+    }
+
+    return "{$proto}://{$host}{$basePath}";
+}
+
+function buildDecodedPageUrl(string $baseUrl, string $albumId, string $chapterId, int $page): string
+{
+    return rtrim($baseUrl, '/') . '/?' . http_build_query([
+        'jmid'    => $albumId,
+        'chapter' => $chapterId,
+        'page'    => (string) $page,
+    ]);
+}
+
+function buildCoverUrl(string $albumId, string $image): string
+{
+    $image = trim($image);
+    if ($image !== '' && (str_starts_with($image, 'http://') || str_starts_with($image, 'https://'))) {
+        return $image;
+    }
+
+    $cdn = JmConfig::CDN_DOMAINS[array_rand(JmConfig::CDN_DOMAINS)];
+    if ($image !== '') {
+        if (str_starts_with($image, '/')) {
+            return "https://{$cdn}{$image}";
+        }
+        if (str_starts_with($image, 'media/')) {
+            return "https://{$cdn}/{$image}";
+        }
+    }
+
+    return "https://{$cdn}/media/albums/{$albumId}_3x4.jpg";
+}
+
+function normalizeListPage(mixed $value): int
+{
+    $raw = is_scalar($value) ? trim((string) $value) : '';
+    if ($raw === '') return 1;
+    if (!preg_match('/^\d{1,5}$/', $raw)) {
+        throw new SecurityException('无效的分页参数', 400);
+    }
+    return max(1, (int) $raw);
+}
+
+function normalizeListMode(mixed $value): string
+{
+    $mode = strtolower(trim(is_scalar($value) ? (string) $value : 'popular'));
+    return match ($mode) {
+        '', 'popular', 'hot', 'rank', 'ranking' => 'popular',
+        'latest', 'new', 'updates' => 'latest',
+        default => throw new SecurityException('无效的列表模式', 400),
+    };
+}
+
+function normalizeSearchQuery(mixed $value): string
+{
+    $query = trim(is_scalar($value) ? (string) $value : '');
+    if ($query === '') {
+        throw new SecurityException('缺少搜索关键词', 400);
+    }
+    if (mb_strlen($query, 'UTF-8') > 100) {
+        throw new SecurityException('搜索关键词过长', 400);
+    }
+    return InputValidator::sanitizeString($query);
+}
+
+function normalizeSearchOrder(mixed $value): string
+{
+    $order = strtolower(trim(is_scalar($value) ? (string) $value : 'mr'));
+    return in_array($order, ['mr', 'mv', 'mp', 'tf', 'new'], true) ? $order : 'mr';
+}
+
 /** @return never */
 function sendBinaryImage(string $bytes, string $mime): void
 {
@@ -1066,6 +1354,42 @@ try {
 
 // ── Parse input ──
 
+$minify = ($_GET['format'] ?? '') === 'min';
+$listParam = $_GET['list'] ?? null;
+$searchParam = $_GET['search'] ?? null;
+
+if ($listParam !== null || $searchParam !== null) {
+    $service = new JmService();
+    $startMs = hrtime(true);
+    try {
+        $page = normalizeListPage($_GET['page'] ?? '1');
+        if ($searchParam !== null) {
+            $query = normalizeSearchQuery($searchParam);
+            $order = normalizeSearchOrder($_GET['order'] ?? $_GET['o'] ?? 'mr');
+            $result = $service->searchAlbums($query, $page, $order);
+        } else {
+            $mode = normalizeListMode($listParam);
+            $result = $mode === 'latest'
+                ? $service->fetchLatestList($page)
+                : $service->fetchPopularList($page);
+        }
+
+        $data = $result->toArray();
+        $data['elapsed_ms'] = elapsedMs($startMs);
+        $data['api_calls'] = $service->requestCount();
+
+        sendJson(['code' => 200, 'success' => true, 'data' => $data], $minify);
+    } catch (SecurityException $e) {
+        sendError($e->getCode() ?: 400, $e->getMessage());
+    } catch (JmException $e) {
+        error_log('[jm-api] JmException: ' . $e->getMessage());
+        sendError($e->getCode() ?: 502, '上游服务不可用');
+    } catch (\Throwable $e) {
+        error_log('[jm-api] Throwable: ' . $e::class . ': ' . $e->getMessage());
+        sendError(500, '服务器内部错误');
+    }
+}
+
 $jmid = $_GET['jmid'] ?? null;
 if ($jmid === null || $jmid === '') {
     sendError(400, '缺少参数 jmid');
@@ -1079,7 +1403,6 @@ try {
 
 $chapterParam = $_GET['chapter'] ?? null;
 $pageParam    = $_GET['page'] ?? null;
-$minify       = ($_GET['format'] ?? '') === 'min';
 
 // ── Brute force check ──
 
@@ -1098,6 +1421,7 @@ try {
     // Step 1: fetch album
     $album    = $service->fetchAlbum($jmid);
     $episodes = $album->episodes;
+    $publicBaseUrl = requestBaseUrl();
 
     if ($pageParam !== null && $pageParam !== '') {
         if ($chapterParam === null || $chapterParam === '') {
@@ -1152,7 +1476,7 @@ try {
         'success' => true,
         'data'    => [
             'album'            => $album->toArray(),
-            'chapters'         => array_map(fn(JmChapter $ch) => $ch->toArray(), $result['chapters']),
+            'chapters'         => array_map(fn(JmChapter $ch) => $ch->toArray($album->id, $publicBaseUrl), $result['chapters']),
             'chapters_total'   => count($episodes),
             'chapters_fetched' => count($result['chapters']),
             'elapsed_ms'       => elapsedMs($startMs),
