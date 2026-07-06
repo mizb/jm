@@ -70,11 +70,11 @@ http://127.0.0.1:8080
 # 拿目录
 curl "http://localhost:8080/?jmid=350234"
 
-# 取单章
-curl "http://localhost:8080/?jmid=350234&chapter=413446"
+# 取第 1 章
+curl "http://localhost:8080/?jmid=350234&chapter=@1"
 
 # 取单页解密图片
-curl -o page.webp "http://localhost:8080/?jmid=350234&chapter=413446&page=1"
+curl -o page.webp "http://localhost:8080/?jmid=350234&chapter=@1&page=1"
 
 # 批量取
 curl "http://localhost:8080/?jmid=350234&chapter=413446,413447,413448"

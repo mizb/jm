@@ -612,6 +612,42 @@ final class ScrambleDecoder
         imagedestroy($dst);
         return $ok;
     }
+
+    public static function decodeBytes(string $bytes, int $segments): string
+    {
+        if ($segments === 0) return $bytes;
+        if (!extension_loaded('gd')) throw new \RuntimeException('GD required');
+
+        $src = imagecreatefromstring($bytes);
+        if ($src === false) throw new \RuntimeException('Cannot open image bytes');
+
+        $w = imagesx($src);
+        $h = imagesy($src);
+        $dst = imagecreatetruecolor($w, $h);
+        imagefill($dst, 0, 0, imagecolorallocate($dst, 255, 255, 255));
+
+        $over = $h % $segments;
+        for ($i = 0; $i < $segments; $i++) {
+            $move = (int) floor($h / $segments);
+            $ySrc = $h - ($move * ($i + 1)) - $over;
+            $yDst = $move * $i;
+            if ($i === 0) { $move += $over; } else { $yDst += $over; }
+            imagecopy($dst, $src, 0, $yDst, 0, $ySrc, $w, $move);
+        }
+
+        ob_start();
+        $ok = imagejpeg($dst, null, 95);
+        $decoded = ob_get_clean();
+
+        imagedestroy($src);
+        imagedestroy($dst);
+
+        if (!$ok || $decoded === false || $decoded === '') {
+            throw new \RuntimeException('Failed to encode decoded image');
+        }
+
+        return $decoded;
+    }
 }
 
 
@@ -672,31 +708,8 @@ final class JmService
             return ['bytes' => $raw, 'mime' => $mime];
         }
 
-        $cacheDir = __DIR__ . '/cache/pages';
-        @mkdir($cacheDir, 0777, true);
-        $basePath = $cacheDir . '/page_' . bin2hex(random_bytes(12));
-        $srcPath = $basePath . '.src';
-        $dstPath = $basePath . '.' . $extension;
-
-        try {
-            if (file_put_contents($srcPath, $raw, LOCK_EX) === false) {
-                throw new JmException('Failed to write temporary image', 500);
-            }
-
-            if (!ScrambleDecoder::decodeFile($srcPath, $segments, $dstPath)) {
-                throw new JmException('Failed to decode image', 500);
-            }
-
-            $bytes = file_get_contents($dstPath);
-            if ($bytes === false || $bytes === '') {
-                throw new JmException('Decoded image is empty', 500);
-            }
-
-            return ['bytes' => $bytes, 'mime' => $mime];
-        } finally {
-            @unlink($srcPath);
-            @unlink($dstPath);
-        }
+        $bytes = ScrambleDecoder::decodeBytes($raw, $segments);
+        return ['bytes' => $bytes, 'mime' => 'image/jpeg'];
     }
 
     /** @return array{chapters: JmChapter[], errors: list<array{photo_id:string, error:string}>} */
@@ -1154,7 +1167,9 @@ try {
     sendJson($response, $minify);
 
 } catch (JmException $e) {
+    error_log('[jm-api] JmException: ' . $e->getMessage());
     sendError($e->getCode() ?: 502, '上游服务不可用');
 } catch (\Throwable $e) {
+    error_log('[jm-api] Throwable: ' . $e::class . ': ' . $e->getMessage());
     sendError(500, '服务器内部错误');
 }
