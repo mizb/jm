@@ -57,6 +57,20 @@ curl "http://localhost:8088/?list=latest&page=1&format=min"
 curl "http://localhost:8088/?search=董卓&page=1&format=min"
 ```
 
+Docker 启动日志会显示 API 构建版本：
+
+```powershell
+docker logs jmcomic-api
+```
+
+看到类似下面这行，就能判断容器加载的是哪一版：
+
+```text
+JM API version 2026.07.06.1
+```
+
+`health=1` 也会返回 `diagnostics.app_version`，可用于接口方式确认当前运行版本。
+
 如果 Suwayomi 和本服务在同一个 Docker Compose/network 中，后续 Suwayomi 扩展应访问：
 
 ```text

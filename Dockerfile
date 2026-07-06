@@ -1,6 +1,7 @@
 FROM php:8.3-cli-alpine
 
 WORKDIR /app
+ENV JM_API_VERSION=2026.07.06.1
 
 RUN apk add --no-cache \
         curl-dev \
@@ -18,6 +19,8 @@ RUN apk add --no-cache \
     && chown -R www-data:www-data /app
 
 COPY --chown=www-data:www-data index.php probe.php README.md LICENSE ./
+COPY --chown=www-data:www-data docker-entrypoint.sh ./
+RUN chmod +x /app/docker-entrypoint.sh
 
 USER www-data
 
@@ -26,4 +29,4 @@ EXPOSE 8088
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD php -r "exit(@file_get_contents('http://127.0.0.1:8088/?health=1') === false ? 1 : 0);"
 
-CMD ["php", "-d", "apc.enable_cli=1", "-d", "apc.shm_size=128M", "-S", "0.0.0.0:8088", "index.php"]
+CMD ["/app/docker-entrypoint.sh"]

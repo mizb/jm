@@ -23,6 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
+    public const APP_VERSION    = '2026.07.06.1';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -1638,6 +1639,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 if (($_GET['health'] ?? '') === '1') {
     $memoryCache = new MemoryCache();
     $report = [
+        'app_version'  => getenv('JM_API_VERSION') ?: JmConfig::APP_VERSION,
         'php'          => PHP_VERSION,
         'apcu'         => $memoryCache->isAvailable(),
         'apcu_details' => $memoryCache->diagnostics(),
