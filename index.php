@@ -316,6 +316,33 @@ final class JmApiClient
         return (string) JmConfig::SCRAMBLE_220980;
     }
 
+    public function downloadImage(string $url): string
+    {
+        $parts = parse_url($url);
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        $host = (string) ($parts['host'] ?? '');
+        $path = (string) ($parts['path'] ?? '');
+
+        if ($scheme !== 'https' || $host === '' || !str_starts_with($path, '/media/photos/')) {
+            throw new JmException('Invalid image URL', 502);
+        }
+
+        $headers = [
+            'Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+            'User-Agent: ' . JmConfig::UA,
+            'Referer: https://18comic.vip/',
+        ];
+
+        [$ok, $body, $statusCode] = $this->http->get($url, $headers);
+        $this->requestCount++;
+
+        if (!$ok || $statusCode >= 400 || $body === '') {
+            throw new JmException('Image download failed', 502);
+        }
+
+        return $body;
+    }
+
     // ── AES-256-ECB decrypt ──
 
     private static function decrypt(string $b64, string $ts): string
@@ -625,6 +652,53 @@ final class JmService
         return JmChapter::fromApiResponse($resp['data'], $scrambleId);
     }
 
+    /** @return array{bytes:string, mime:string} */
+    public function fetchDecodedPage(string $photoId, int $page): array
+    {
+        $scrambleId = $this->fetchScrambleId($photoId);
+        $chapter = $this->fetchChapter($photoId, $scrambleId);
+        $image = $chapter->images[$page - 1] ?? null;
+
+        if ($image === null) {
+            throw new SecurityException("页码 {$page} 超出范围 1-{$chapter->pageCount}", 400);
+        }
+
+        $raw = $this->api->downloadImage($image['url']);
+        $segments = (int) ($image['decode_segments'] ?? 0);
+        $extension = self::imageExtension((string) ($image['filename'] ?? 'page.jpg'));
+        $mime = self::imageMime($extension);
+
+        if ($segments === 0) {
+            return ['bytes' => $raw, 'mime' => $mime];
+        }
+
+        $cacheDir = __DIR__ . '/cache/pages';
+        @mkdir($cacheDir, 0777, true);
+        $basePath = $cacheDir . '/page_' . bin2hex(random_bytes(12));
+        $srcPath = $basePath . '.src';
+        $dstPath = $basePath . '.' . $extension;
+
+        try {
+            if (file_put_contents($srcPath, $raw, LOCK_EX) === false) {
+                throw new JmException('Failed to write temporary image', 500);
+            }
+
+            if (!ScrambleDecoder::decodeFile($srcPath, $segments, $dstPath)) {
+                throw new JmException('Failed to decode image', 500);
+            }
+
+            $bytes = file_get_contents($dstPath);
+            if ($bytes === false || $bytes === '') {
+                throw new JmException('Decoded image is empty', 500);
+            }
+
+            return ['bytes' => $bytes, 'mime' => $mime];
+        } finally {
+            @unlink($srcPath);
+            @unlink($dstPath);
+        }
+    }
+
     /** @return array{chapters: JmChapter[], errors: list<array{photo_id:string, error:string}>} */
     public function fetchChapters(array $photoIds, string $scrambleId): array
     {
@@ -641,6 +715,28 @@ final class JmService
     }
 
     public function requestCount(): int { return $this->api->requestCount(); }
+
+    private static function imageExtension(string $filename): string
+    {
+        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        return match ($extension) {
+            'jpg', 'jpeg' => 'jpg',
+            'png' => 'png',
+            'gif' => 'gif',
+            'webp' => 'webp',
+            default => 'jpg',
+        };
+    }
+
+    private static function imageMime(string $extension): string
+    {
+        return match ($extension) {
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'webp' => 'image/webp',
+            default => 'image/jpeg',
+        };
+    }
 }
 
 
@@ -808,6 +904,22 @@ final class InputValidator
         throw new SecurityException('无效的章节参数', 400);
     }
 
+    public static function validatePageParam(string $param): int
+    {
+        $param = trim($param);
+
+        if (!preg_match('/^\d{1,4}$/', $param)) {
+            throw new SecurityException('无效的页码参数', 400);
+        }
+
+        $page = (int) $param;
+        if ($page < 1) {
+            throw new SecurityException('页码必须大于 0', 400);
+        }
+
+        return $page;
+    }
+
     /** Sanitize output: strip null bytes, control chars from strings. */
     public static function sanitizeString(string $s): string
     {
@@ -845,6 +957,19 @@ final class JmException extends \RuntimeException
 function elapsedMs(float $startNs): int
 {
     return (int) round((hrtime(true) - $startNs) / 1_000_000);
+}
+
+/** @return never */
+function sendBinaryImage(string $bytes, string $mime): void
+{
+    http_response_code(200);
+    header('Content-Type: ' . $mime);
+    header('Content-Length: ' . strlen($bytes));
+    header('Cache-Control: private, max-age=86400');
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: DENY');
+    echo $bytes;
+    exit;
 }
 
 /** @return never */
@@ -940,6 +1065,7 @@ try {
 }
 
 $chapterParam = $_GET['chapter'] ?? null;
+$pageParam    = $_GET['page'] ?? null;
 $minify       = ($_GET['format'] ?? '') === 'min';
 
 // ── Brute force check ──
@@ -959,6 +1085,29 @@ try {
     // Step 1: fetch album
     $album    = $service->fetchAlbum($jmid);
     $episodes = $album->episodes;
+
+    if ($pageParam !== null && $pageParam !== '') {
+        if ($chapterParam === null || $chapterParam === '') {
+            sendError(400, '缺少参数 chapter');
+        }
+
+        try {
+            $fetchIds = InputValidator::validateChapterParam($chapterParam, $album);
+            if (count($fetchIds) !== 1) {
+                throw new SecurityException('图片端点一次只能读取一个章节', 400);
+            }
+            $page = InputValidator::validatePageParam($pageParam);
+        } catch (SecurityException $e) {
+            sendError(400, $e->getMessage());
+        }
+
+        try {
+            $image = $service->fetchDecodedPage($fetchIds[0], $page);
+        } catch (SecurityException $e) {
+            sendError(400, $e->getMessage());
+        }
+        sendBinaryImage($image['bytes'], $image['mime']);
+    }
 
     // Mode A: metadata only (no chapter param)
     if ($chapterParam === null || $chapterParam === '') {

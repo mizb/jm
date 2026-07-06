@@ -73,6 +73,9 @@ curl "http://localhost:8080/?jmid=350234"
 # 取单章
 curl "http://localhost:8080/?jmid=350234&chapter=413446"
 
+# 取单页解密图片
+curl -o page.webp "http://localhost:8080/?jmid=350234&chapter=413446&page=1"
+
 # 批量取
 curl "http://localhost:8080/?jmid=350234&chapter=413446,413447,413448"
 
@@ -225,6 +228,16 @@ JM CDN 上的图片经过**行乱序加密**。直接打开 URL 显示花图。
 
 - `decode_segments = 0` → 图片未加密，URL 直链可用
 - `decode_segments > 0` → 需要解密，数字为行段数
+
+### GET /?jmid={id}&chapter={chapter}&page={page}
+
+**返回单页解密后的图片二进制**，适合 Suwayomi/Tachiyomi 扩展直接作为图片地址使用。
+
+```
+GET /?jmid=350234&chapter=413446&page=1
+```
+
+接口会先校验 `chapter` 是否属于指定 `jmid`，再从章节图片列表中按 1-based `page` 取图、下载原图、按 `decode_segments` 解乱序并输出图片。该接口不会接受任意外部图片 URL，因此不会作为开放代理使用。
 
 ### PHP 解密
 
