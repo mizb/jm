@@ -1,7 +1,7 @@
 FROM php:8.3-cli-alpine
 
 WORKDIR /app
-ENV JM_API_VERSION=2026.07.07.1
+ENV JM_API_VERSION=2026.07.07.2
 
 RUN apk add --no-cache \
         curl-dev \

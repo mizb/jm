@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.07.1';
+    public const APP_VERSION    = '2026.07.07.2';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -529,24 +529,55 @@ final class JmAlbum
         $self->related     = $data['related_list'] ?? [];
 
         $episodes = [];
-        foreach ($data['series'] ?? [] as $ch) {
+        foreach ($data['series'] ?? [] as $sourceIndex => $ch) {
             $episodes[] = [
                 'photo_id' => (string) $ch['id'],
                 'sort'     => (string) ($ch['sort'] ?? '1'),
                 'title'    => $ch['name'] ?? '',
+                'source_index' => (int) $sourceIndex,
             ];
         }
 
         if (empty($episodes)) {
             $episodes[] = ['photo_id' => (string) $data['id'], 'sort' => '1', 'title' => $self->name];
         } else {
-            usort($episodes, fn($a, $b) => (int) $a['sort'] <=> (int) $b['sort']);
-            $seen = [];
-            $episodes = array_values(array_filter($episodes, fn($ep) => !isset($seen[$ep['sort']]) && ($seen[$ep['sort']] = true)));
+            $episodes = self::normalizeEpisodes($episodes);
         }
 
         $self->episodes = $episodes;
         return $self;
+    }
+
+    /** @param list<array{photo_id:string, sort:string, title:string, source_index?:int}> $episodes */
+    private static function normalizeEpisodes(array $episodes): array
+    {
+        usort($episodes, function (array $a, array $b): int {
+            $sortCompare = self::episodeSortValue((string) ($a['sort'] ?? '')) <=> self::episodeSortValue((string) ($b['sort'] ?? ''));
+            if ($sortCompare !== 0) return $sortCompare;
+            return ((int) ($a['source_index'] ?? 0)) <=> ((int) ($b['source_index'] ?? 0));
+        });
+
+        $seenPhotoIds = [];
+        $normalized = [];
+        foreach ($episodes as $ep) {
+            $photoId = trim((string) ($ep['photo_id'] ?? ''));
+            if ($photoId === '' || isset($seenPhotoIds[$photoId])) continue;
+            $seenPhotoIds[$photoId] = true;
+
+            $normalized[] = [
+                'photo_id' => $photoId,
+                'sort'     => (string) (count($normalized) + 1),
+                'title'    => (string) ($ep['title'] ?? ''),
+            ];
+        }
+
+        return $normalized;
+    }
+
+    private static function episodeSortValue(string $sort): int
+    {
+        $trimmed = trim($sort);
+        return preg_match('/^\d+$/', $trimmed) === 1 ? (int) $trimmed : PHP_INT_MAX;
     }
 
     /** @return list<string> */

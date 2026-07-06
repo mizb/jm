@@ -39,6 +39,7 @@ The API now has:
 - GIF and non-scrambled images returned without re-encoding.
 - Prefetch that skips already cached pages and stops on out-of-range/upstream failures.
 - Album metadata includes an `image` cover URL for detail thumbnails.
+- Album chapter metadata preserves every distinct `photo_id`; duplicated or missing upstream `sort` values are normalized into a continuous reading order so Suwayomi can keep stable start/resume/next-chapter behavior.
 
 The Suwayomi extension currently uses:
 

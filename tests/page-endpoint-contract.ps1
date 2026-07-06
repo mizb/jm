@@ -65,7 +65,10 @@ $requiredSnippets = @(
     'function buildDecodedPageUrl',
     '''source_url''',
     '''mime''',
-    '$ch->toArray($album->id, $publicBaseUrl)'
+    '$ch->toArray($album->id, $publicBaseUrl)',
+    'normalizeEpisodes',
+    '$seenPhotoIds',
+    'episodeSortValue'
 )
 
 foreach ($snippet in $requiredSnippets) {
@@ -83,6 +86,7 @@ Assert-Matches 'prefetchDecodedPages[\s\S]*?isDecodedPageCached\(\$photoId,\s*\$
 Assert-Matches 'decodeBytesWithInfo[\s\S]*?imagewebp\(\$dst,\s*null,\s*self::WEBP_QUALITY\)[\s\S]*?imagejpeg\(\$dst,\s*null,\s*self::JPEG_QUALITY\)' 'decoded image prefers WebP and falls back to JPEG 85'
 Assert-Matches 'foreach\s*\(\$photoIds\s+as\s+\$pid\)\s*\{[\s\S]*?\$scrambleId\s*=\s*\$this->fetchScrambleId\(\$pid\);[\s\S]*?\$chapters\[\]\s*=\s*\$this->fetchChapter\(\$pid,\s*\$scrambleId\);' 'batch chapter fetch uses each chapter photo_id scramble id'
 Assert-NotContains '$scrambleId = $service->fetchScrambleId($fetchIds[0]);'
+Assert-NotContains '$seen[$ep[''sort'']]'
 Assert-Contains 'preg_match(''/^@\d+$/'', $param)'
 Assert-Contains 'private static function normalizeJmId'
 Assert-Contains 'strlen($id) > JmConfig::JMID_MAX_LENGTH'

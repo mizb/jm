@@ -40,7 +40,7 @@ $runtimeVerify = Read-ProjectFile 'scripts/runtime-verify.ps1'
 $entrypoint = Read-ProjectFile 'docker-entrypoint.sh'
 $source = Read-ProjectFile 'index.php'
 
-$expectedApiVersion = '2026.07.07.1'
+$expectedApiVersion = '2026.07.07.2'
 
 Assert-Contains $dockerfile 'pecl\s+install\s+apcu' 'APCu installation'
 Assert-Contains $dockerfile 'docker-php-ext-enable\s+apcu' 'APCu enablement'
