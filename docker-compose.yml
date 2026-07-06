@@ -1,0 +1,14 @@
+services:
+  jmcomic-api:
+    build:
+      context: .
+    image: jmcomic-api:local
+    container_name: jmcomic-api
+    ports:
+      - "8080:8080"
+    volumes:
+      - jmcomic-api-cache:/app/cache
+    restart: unless-stopped
+
+volumes:
+  jmcomic-api-cache:
