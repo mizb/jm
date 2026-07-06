@@ -76,6 +76,12 @@ final class JmConfig
     public const RATE_PENALTY      = 300;   // ban duration after exceeding limit
     public const MAX_CHAPTERS      = 50;    // max chapters per request (anti-abuse)
     public const JMID_MAX_LENGTH   = 20;    // jmid max characters
+
+    public const DEFAULT_PAGE_CACHE_TTL    = 3600;
+    public const DEFAULT_CHAPTER_CACHE_TTL = 21600;
+    public const DEFAULT_PREFETCH_PAGES = 10;
+    public const DEFAULT_PAGE_CACHE_MAX_ITEM_BYTES = 104857600;
+    public const DEFAULT_PAGE_CACHE_MAX_BYTES = 104857600;
 }
 
 
@@ -214,6 +220,77 @@ final class RedisStore
 // ═════════════════════════════════════════════════════════════════════════════
 // API Client — auth, domain rotation, retry, decryption
 // ═════════════════════════════════════════════════════════════════════════════
+
+final class MemoryCache
+{
+    private const PREFIX = 'jmapi:';
+    private bool $enabled;
+
+    public function __construct(private string $prefix = self::PREFIX)
+    {
+        $this->enabled = function_exists('apcu_enabled') && apcu_enabled();
+    }
+
+    public function isAvailable(): bool
+    {
+        return $this->enabled;
+    }
+
+    public function get(string $key): mixed
+    {
+        if (!$this->enabled) return null;
+
+        $success = false;
+        $value = apcu_fetch($this->prefix . $key, $success);
+        return $success ? $value : null;
+    }
+
+    public function set(string $key, mixed $value, int $ttl): bool
+    {
+        if (!$this->enabled || $ttl <= 0) return false;
+        return apcu_store($this->prefix . $key, $value, $ttl);
+    }
+
+    public function diagnostics(): array
+    {
+        $details = [
+            'enabled'            => $this->enabled,
+            'total_memory_bytes' => null,
+            'free_memory_bytes'  => null,
+            'used_memory_bytes'  => null,
+            'entries'            => null,
+            'hits'               => null,
+            'misses'             => null,
+        ];
+
+        if (!$this->enabled) return $details;
+
+        if (function_exists('apcu_sma_info')) {
+            $sma = @apcu_sma_info(true);
+            if (is_array($sma)) {
+                $total = null;
+                if (isset($sma['num_seg'], $sma['seg_size'])) {
+                    $total = (int) $sma['num_seg'] * (int) $sma['seg_size'];
+                }
+                $free = isset($sma['avail_mem']) ? (int) $sma['avail_mem'] : null;
+                $details['total_memory_bytes'] = $total;
+                $details['free_memory_bytes'] = $free;
+                $details['used_memory_bytes'] = ($total !== null && $free !== null) ? max(0, $total - $free) : null;
+            }
+        }
+
+        if (function_exists('apcu_cache_info')) {
+            $info = @apcu_cache_info(true);
+            if (is_array($info)) {
+                $details['entries'] = isset($info['num_entries']) ? (int) $info['num_entries'] : null;
+                $details['hits'] = isset($info['num_hits']) ? (int) $info['num_hits'] : null;
+                $details['misses'] = isset($info['num_misses']) ? (int) $info['num_misses'] : null;
+            }
+        }
+
+        return $details;
+    }
+}
 
 final class JmApiClient
 {
@@ -377,11 +454,10 @@ final class JmApiClient
 
     private static function resolveDomains(): array
     {
-        $cacheFile = __DIR__ . '/cache/api-domains.json';
-
-        if (is_file($cacheFile) && (time() - filemtime($cacheFile)) < 86400) {
-            $c = json_decode(file_get_contents($cacheFile), true);
-            if (is_array($c) && !empty($c)) return $c;
+        $cache = new MemoryCache();
+        $cachedDomains = $cache->get('api-domains');
+        if (is_array($cachedDomains) && !empty($cachedDomains)) {
+            return $cachedDomains;
         }
 
         foreach (JmConfig::DOMAIN_SERVER_URLS as $url) {
@@ -410,8 +486,7 @@ final class JmApiClient
                 $data  = json_decode($plain, true);
                 $servers = $data['Server'] ?? null;
                 if (is_array($servers) && !empty($servers)) {
-                    @mkdir(dirname($cacheFile), 0777, true);
-                    file_put_contents($cacheFile, json_encode($servers), LOCK_EX);
+                    $cache->set('api-domains', $servers, 86400);
                     return $servers;
                 }
             } catch (\Throwable) { continue; }
@@ -428,7 +503,7 @@ final class JmApiClient
 
 final class JmAlbum
 {
-    public string $id, $name, $description, $views, $likes, $comments;
+    public string $id, $name, $description, $image, $views, $likes, $comments;
     public array $author, $tags, $works, $actors, $related;
     /** @var list<array{photo_id:string, sort:string, title:string}> */
     public array $episodes;
@@ -442,6 +517,8 @@ final class JmAlbum
         $self->name        = $data['name'] ?? '';
         $self->author      = $data['author'] ?? [];
         $self->description = $data['description'] ?? '';
+        $rawImage          = $data['image'] ?? '';
+        $self->image       = is_scalar($rawImage) ? (string) $rawImage : '';
         $self->views       = $data['total_views'] ?? '0';
         $self->likes       = $data['likes'] ?? '0';
         $self->comments    = (string) ($data['comment_total'] ?? '0');
@@ -489,6 +566,7 @@ final class JmAlbum
         return [
             'album_id'    => $this->id,
             'name'        => $this->name,
+            'image'       => buildCoverUrl($this->id, $this->image),
             'author'      => $this->author,
             'description' => $this->description,
             'total_views' => $this->views,
@@ -551,9 +629,12 @@ final class JmChapter
             $page = (int) ($image['index'] ?? 0);
             $segments = (int) ($image['decode_segments'] ?? 0);
             $filename = (string) ($image['filename'] ?? 'page.jpg');
+            $extension = self::imageExtension($filename);
 
             $image['source_url'] = $sourceUrl;
-            $image['mime'] = $segments > 0 ? 'image/jpeg' : self::imageMime($filename);
+            $image['mime'] = ($segments > 0 && $extension !== 'gif')
+                ? ScrambleDecoder::preferredDecodedMime()
+                : self::imageMime($extension);
 
             if ($albumId !== null && $publicBaseUrl !== null && $page > 0) {
                 $image['url'] = buildDecodedPageUrl($publicBaseUrl, $albumId, $this->photoId, $page);
@@ -571,9 +652,20 @@ final class JmChapter
         ];
     }
 
-    private static function imageMime(string $filename): string
+    private static function imageExtension(string $filename): string
     {
         $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        return match ($extension) {
+            'jpg', 'jpeg' => 'jpg',
+            'png' => 'png',
+            'gif' => 'gif',
+            'webp' => 'webp',
+            default => 'jpg',
+        };
+    }
+
+    private static function imageMime(string $extension): string
+    {
         return match ($extension) {
             'png' => 'image/png',
             'gif' => 'image/gif',
@@ -690,6 +782,9 @@ final class JmListResult
 
 final class ScrambleDecoder
 {
+    private const WEBP_QUALITY = 85;
+    private const JPEG_QUALITY = 85;
+
     public static function segments(string $scrambleId, string $aid, string $filename): int
     {
         $sid = (int) $scrambleId;
@@ -740,11 +835,11 @@ final class ScrambleDecoder
 
         $ext = strtolower(pathinfo($dstPath, PATHINFO_EXTENSION));
         $ok  = match ($ext) {
-            'jpg', 'jpeg' => imagejpeg($dst, $dstPath, 95),
+            'jpg', 'jpeg' => imagejpeg($dst, $dstPath, self::JPEG_QUALITY),
             'png'         => imagepng($dst, $dstPath),
             'gif'         => imagegif($dst, $dstPath),
-            'webp'        => imagewebp($dst, $dstPath, 95),
-            default       => imagejpeg($dst, $dstPath, 95),
+            'webp'        => imagewebp($dst, $dstPath, self::WEBP_QUALITY),
+            default       => imagejpeg($dst, $dstPath, self::JPEG_QUALITY),
         };
 
         imagedestroy($src);
@@ -754,7 +849,13 @@ final class ScrambleDecoder
 
     public static function decodeBytes(string $bytes, int $segments): string
     {
-        if ($segments === 0) return $bytes;
+        return self::decodeBytesWithInfo($bytes, $segments)['bytes'];
+    }
+
+    /** @return array{bytes:string, mime:string, codec:string} */
+    public static function decodeBytesWithInfo(string $bytes, int $segments): array
+    {
+        if ($segments === 0) return ['bytes' => $bytes, 'mime' => 'application/octet-stream', 'codec' => 'original'];
         if (!extension_loaded('gd')) throw new \RuntimeException('GD required');
 
         $src = imagecreatefromstring($bytes);
@@ -775,7 +876,15 @@ final class ScrambleDecoder
         }
 
         ob_start();
-        $ok = imagejpeg($dst, null, 95);
+        if (self::canEncodeWebp()) {
+            $ok = imagewebp($dst, null, self::WEBP_QUALITY);
+            $mime = 'image/webp';
+            $codec = 'webp';
+        } else {
+            $ok = imagejpeg($dst, null, self::JPEG_QUALITY);
+            $mime = 'image/jpeg';
+            $codec = 'jpeg';
+        }
         $decoded = ob_get_clean();
 
         imagedestroy($src);
@@ -785,7 +894,24 @@ final class ScrambleDecoder
             throw new \RuntimeException('Failed to encode decoded image');
         }
 
-        return $decoded;
+        return ['bytes' => $decoded, 'mime' => $mime, 'codec' => $codec];
+    }
+
+    public static function preferredDecodedMime(): string
+    {
+        return self::canEncodeWebp() ? 'image/webp' : 'image/jpeg';
+    }
+
+    public static function preferredDecodedCodec(): string
+    {
+        return self::canEncodeWebp() ? 'webp' : 'jpeg';
+    }
+
+    private static function canEncodeWebp(): bool
+    {
+        return function_exists('imagewebp')
+            && defined('IMG_WEBP')
+            && ((imagetypes() & IMG_WEBP) === IMG_WEBP);
     }
 }
 
@@ -797,10 +923,12 @@ final class ScrambleDecoder
 final class JmService
 {
     private JmApiClient $api;
+    private MemoryCache $cache;
 
     public function __construct()
     {
         $this->api = new JmApiClient();
+        $this->cache = new MemoryCache();
     }
 
     public function fetchAlbum(string $jmid): JmAlbum
@@ -852,23 +980,32 @@ final class JmService
 
     public function fetchScrambleId(string $photoId): string
     {
-        $cacheFile = __DIR__ . '/cache/scramble_' . md5($photoId) . '.txt';
-        if (is_file($cacheFile) && (time() - filemtime($cacheFile)) < 3600) {
-            return file_get_contents($cacheFile) ?: (string) JmConfig::SCRAMBLE_220980;
+        $cacheKey = 'scramble:' . md5($photoId);
+        $cached = $this->cache->get($cacheKey);
+        if (is_string($cached) && $cached !== '') {
+            return $cached;
         }
+
         $id = $this->api->fetchScrambleId($photoId);
-        @mkdir(dirname($cacheFile), 0777, true);
-        file_put_contents($cacheFile, $id, LOCK_EX);
+        $this->cache->set($cacheKey, $id, 3600);
         return $id;
     }
 
     public function fetchChapter(string $photoId, string $scrambleId): JmChapter
     {
+        $cacheKey = 'chapter:' . md5($photoId . ':' . $scrambleId);
+        $cached = $this->cache->get($cacheKey);
+        if ($cached instanceof JmChapter) {
+            return $cached;
+        }
+
         $resp = $this->api->callJson(JmConfig::ENDPOINT_CHAPTER, ['id' => $photoId]);
-        return JmChapter::fromApiResponse($resp['data'], $scrambleId);
+        $chapter = JmChapter::fromApiResponse($resp['data'], $scrambleId);
+        $this->cache->set($cacheKey, $chapter, self::envInt('JM_CHAPTER_CACHE_TTL', JmConfig::DEFAULT_CHAPTER_CACHE_TTL, 0, 86400));
+        return $chapter;
     }
 
-    /** @return array{bytes:string, mime:string} */
+    /** @return array{bytes:string, mime:string, codec:string, cache_hit:bool} */
     public function fetchDecodedPage(string $photoId, int $page): array
     {
         $scrambleId = $this->fetchScrambleId($photoId);
@@ -879,17 +1016,70 @@ final class JmService
             throw new SecurityException("页码 {$page} 超出范围 1-{$chapter->pageCount}", 400);
         }
 
-        $raw = $this->api->downloadImage($image['url']);
         $segments = (int) ($image['decode_segments'] ?? 0);
         $extension = self::imageExtension((string) ($image['filename'] ?? 'page.jpg'));
         $mime = self::imageMime($extension);
-
-        if ($segments === 0) {
-            return ['bytes' => $raw, 'mime' => $mime];
+        $cacheKey = self::decodedPageCacheKey($photoId, $page, $image);
+        $cached = $this->cache->get($cacheKey);
+        if (is_array($cached) && isset($cached['bytes'], $cached['mime'])) {
+            return [
+                'bytes' => (string) $cached['bytes'],
+                'mime' => (string) $cached['mime'],
+                'codec' => (string) ($cached['codec'] ?? self::codecFromMime((string) $cached['mime'])),
+                'cache_hit' => true,
+            ];
         }
 
-        $bytes = ScrambleDecoder::decodeBytes($raw, $segments);
-        return ['bytes' => $bytes, 'mime' => 'image/jpeg'];
+        $raw = $this->api->downloadImage($image['url']);
+
+        if ($extension === 'gif' || $segments === 0) {
+            $result = [
+                'bytes' => $raw,
+                'mime' => $mime,
+                'codec' => self::codecFromMime($mime),
+                'cache_hit' => false,
+            ];
+            $this->cacheDecodedPage($cacheKey, $result);
+            return $result;
+        }
+
+        $decoded = ScrambleDecoder::decodeBytesWithInfo($raw, $segments);
+        $result = [
+            'bytes' => $decoded['bytes'],
+            'mime' => $decoded['mime'],
+            'codec' => $decoded['codec'],
+            'cache_hit' => false,
+        ];
+        $this->cacheDecodedPage($cacheKey, $result);
+        return $result;
+    }
+
+    public function maybePrefetchPages(string $photoId, int $page, bool $enabled): void
+    {
+        $pages = self::envInt('JM_PREFETCH_PAGES', JmConfig::DEFAULT_PREFETCH_PAGES, 0, 30);
+        if (!$enabled || $pages <= 0 || !$this->cache->isAvailable()) return;
+
+        register_shutdown_function(function () use ($photoId, $page, $pages): void {
+            $this->prefetchDecodedPages($photoId, $page + 1, $pages);
+        });
+    }
+
+    public function prefetchDecodedPages(string $photoId, int $startPage, int $count): void
+    {
+        for ($offset = 0; $offset < $count; $offset++) {
+            $candidatePage = $startPage + $offset;
+            try {
+                if ($this->isDecodedPageCached($photoId, $candidatePage)) {
+                    continue;
+                }
+                $this->fetchDecodedPage($photoId, $candidatePage);
+            } catch (SecurityException) {
+                break;
+            } catch (\Throwable $e) {
+                error_log('[jm-api] prefetch failed: ' . $e->getMessage());
+                break;
+            }
+        }
     }
 
     /** @return array{chapters: JmChapter[], errors: list<array{photo_id:string, error:string}>} */
@@ -908,6 +1098,61 @@ final class JmService
     }
 
     public function requestCount(): int { return $this->api->requestCount(); }
+
+    private function cacheDecodedPage(string $cacheKey, array $result): void
+    {
+        $maxBytes = self::envInt(
+            'JM_PAGE_CACHE_MAX_ITEM_BYTES',
+            self::envInt('JM_PAGE_CACHE_MAX_BYTES', JmConfig::DEFAULT_PAGE_CACHE_MAX_ITEM_BYTES, 0, 512 * 1024 * 1024),
+            0,
+            512 * 1024 * 1024
+        );
+        if ($maxBytes > 0 && strlen((string) ($result['bytes'] ?? '')) > $maxBytes) return;
+
+        $this->cache->set(
+            $cacheKey,
+            [
+                'bytes' => (string) $result['bytes'],
+                'mime' => (string) $result['mime'],
+                'codec' => (string) ($result['codec'] ?? self::codecFromMime((string) $result['mime'])),
+            ],
+            self::envInt('JM_PAGE_CACHE_TTL', JmConfig::DEFAULT_PAGE_CACHE_TTL, 0, 86400)
+        );
+    }
+
+    private function isDecodedPageCached(string $photoId, int $page): bool
+    {
+        $scrambleId = $this->fetchScrambleId($photoId);
+        $chapter = $this->fetchChapter($photoId, $scrambleId);
+        $image = $chapter->images[$page - 1] ?? null;
+
+        if ($image === null) {
+            throw new SecurityException("椤电爜 {$page} 瓒呭嚭鑼冨洿 1-{$chapter->pageCount}", 400);
+        }
+
+        $cacheKey = self::decodedPageCacheKey($photoId, $page, $image);
+        $cached = $this->cache->get($cacheKey);
+        return is_array($cached) && isset($cached['bytes'], $cached['mime']);
+    }
+
+    private static function decodedPageCacheKey(string $photoId, int $page, array $image): string
+    {
+        return 'page:' . md5(implode(':', [
+            $photoId,
+            (string) $page,
+            (string) ($image['filename'] ?? ''),
+            (string) ($image['url'] ?? ''),
+            (string) ($image['decode_segments'] ?? 0),
+        ]));
+    }
+
+    private static function envInt(string $name, int $default, int $min, int $max): int
+    {
+        $raw = getenv($name);
+        if ($raw === false || trim((string) $raw) === '') return $default;
+        if (!preg_match('/^\d+$/', trim((string) $raw))) return $default;
+        return min($max, max($min, (int) $raw));
+    }
 
     private function listResultFromItems(string $mode, int $page, array $items, int $total): JmListResult
     {
@@ -952,6 +1197,17 @@ final class JmService
             'gif' => 'image/gif',
             'webp' => 'image/webp',
             default => 'image/jpeg',
+        };
+    }
+
+    private static function codecFromMime(string $mime): string
+    {
+        return match (strtolower($mime)) {
+            'image/png' => 'png',
+            'image/gif' => 'gif',
+            'image/webp' => 'webp',
+            'image/jpeg', 'image/jpg' => 'jpeg',
+            default => 'original',
         };
     }
 }
@@ -1137,6 +1393,15 @@ final class InputValidator
         return $page;
     }
 
+    public static function validateNumericChapterId(string $param): string
+    {
+        $param = trim($param);
+        if (!preg_match('/^\d{1,20}$/', $param)) {
+            throw new SecurityException('Invalid chapter ID', 400);
+        }
+        return $param;
+    }
+
     /** Sanitize output: strip null bytes, control chars from strings. */
     public static function sanitizeString(string $s): string
     {
@@ -1269,13 +1534,29 @@ function normalizeSearchOrder(mixed $value): string
     return in_array($order, ['mr', 'mv', 'mp', 'tf', 'new'], true) ? $order : 'mr';
 }
 
+function isPrefetchEnabled(mixed $value): bool
+{
+    $raw = strtolower(trim(is_scalar($value) ? (string) $value : '1'));
+    return !in_array($raw, ['0', 'false', 'off', 'no'], true);
+}
+
+function isDirectNumericChapterImageRequest(mixed $chapterParam, mixed $pageParam): bool
+{
+    if (!is_scalar($chapterParam) || !is_scalar($pageParam)) return false;
+    $chapter = trim((string) $chapterParam);
+    $page = trim((string) $pageParam);
+    return $chapter !== '' && $page !== '' && preg_match('/^\d{1,20}$/', $chapter) === 1;
+}
+
 /** @return never */
-function sendBinaryImage(string $bytes, string $mime): void
+function sendBinaryImage(string $bytes, string $mime, bool $cacheHit = false, string $codec = 'original'): void
 {
     http_response_code(200);
     header('Content-Type: ' . $mime);
     header('Content-Length: ' . strlen($bytes));
     header('Cache-Control: private, max-age=86400');
+    header('X-JM-Cache: ' . ($cacheHit ? 'HIT' : 'MISS'));
+    header('X-JM-Image-Codec: ' . $codec);
     header('X-Content-Type-Options: nosniff');
     header('X-Frame-Options: DENY');
     echo $bytes;
@@ -1343,10 +1624,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 // ── Health check (no rate limit) ──
 
 if (($_GET['health'] ?? '') === '1') {
+    $memoryCache = new MemoryCache();
     $report = [
-        'php'    => PHP_VERSION,
-        'redis'  => (new RedisStore())->isAvailable(),
-        'memory' => memory_get_usage(true),
+        'php'          => PHP_VERSION,
+        'apcu'         => $memoryCache->isAvailable(),
+        'apcu_details' => $memoryCache->diagnostics(),
+        'redis'        => (new RedisStore())->isAvailable(),
+        'memory'       => memory_get_usage(true),
     ];
     sendJson(['code' => 200, 'success' => true, 'diagnostics' => $report], false);
 }
@@ -1427,6 +1711,24 @@ $service = new JmService();
 $startMs = hrtime(true);
 
 try {
+    if (isDirectNumericChapterImageRequest($chapterParam, $pageParam)) {
+        try {
+            $chapterId = InputValidator::validateNumericChapterId((string) $chapterParam);
+            $page = InputValidator::validatePageParam((string) $pageParam);
+            $image = $service->fetchDecodedPage($chapterId, $page);
+        } catch (SecurityException $e) {
+            sendError(400, $e->getMessage());
+        }
+
+        $service->maybePrefetchPages($chapterId, $page, isPrefetchEnabled($_GET['prefetch'] ?? '1'));
+        sendBinaryImage(
+            $image['bytes'],
+            $image['mime'],
+            (bool) ($image['cache_hit'] ?? false),
+            (string) ($image['codec'] ?? 'original')
+        );
+    }
+
     // Step 1: fetch album
     $album    = $service->fetchAlbum($jmid);
     $episodes = $album->episodes;
@@ -1452,7 +1754,13 @@ try {
         } catch (SecurityException $e) {
             sendError(400, $e->getMessage());
         }
-        sendBinaryImage($image['bytes'], $image['mime']);
+        $service->maybePrefetchPages($fetchIds[0], $page, isPrefetchEnabled($_GET['prefetch'] ?? '1'));
+        sendBinaryImage(
+            $image['bytes'],
+            $image['mime'],
+            (bool) ($image['cache_hit'] ?? false),
+            (string) ($image['codec'] ?? 'original')
+        );
     }
 
     // Mode A: metadata only (no chapter param)

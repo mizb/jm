@@ -5,10 +5,11 @@ services:
     image: jmcomic-api:local
     container_name: jmcomic-api
     ports:
-      - "8080:8080"
-    volumes:
-      - jmcomic-api-cache:/app/cache
+      - "8088:8088"
+    environment:
+      JM_PREFETCH_PAGES: "10"
+      JM_PAGE_CACHE_TTL: "3600"
+      JM_CHAPTER_CACHE_TTL: "21600"
+      JM_PAGE_CACHE_MAX_ITEM_BYTES: "104857600"
+      PHP_CLI_SERVER_WORKERS: "4"
     restart: unless-stopped
-
-volumes:
-  jmcomic-api-cache:
