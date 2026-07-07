@@ -1,7 +1,12 @@
 FROM php:8.3-cli-alpine
 
 WORKDIR /app
-ENV JM_API_VERSION=2026.07.07.3
+ARG JM_API_VERSION=2026.07.07.3
+ARG JM_API_REVISION=unknown
+ENV JM_API_VERSION=$JM_API_VERSION
+LABEL org.opencontainers.image.title="JM Comic Viewer API" \
+      org.opencontainers.image.version=$JM_API_VERSION \
+      org.opencontainers.image.revision=$JM_API_REVISION
 
 RUN apk add --no-cache \
         curl-dev \

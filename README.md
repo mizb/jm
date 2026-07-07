@@ -26,6 +26,7 @@ docker compose up -d --build
 
 ```text
 ghcr.io/<你的GitHub用户名>/<仓库名>:latest
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.3
 ```
 
 如果要直接使用 GHCR 镜像，可以把 `docker-compose.yml` 中的 `build` 删除，并把 `image` 改成你的镜像名：
@@ -59,6 +60,30 @@ services:
 ```
 
 如果 GHCR 包默认是 private，需要在 GitHub 仓库的 Packages 页面把包可见性改为 public，或在部署机器上先执行 `docker login ghcr.io`。
+
+如果启动日志没有显示版本号，通常是还在运行旧容器或旧镜像。先强制重建/重拉，再看日志：
+
+```powershell
+docker compose down
+docker compose build --no-cache
+docker compose up -d --force-recreate
+docker logs jmcomic-api
+```
+
+使用 GHCR 镜像时：
+
+```powershell
+docker pull ghcr.io/<你的GitHub用户名>/<仓库名>:latest
+docker compose up -d --force-recreate
+docker logs jmcomic-api
+docker image inspect ghcr.io/<你的GitHub用户名>/<仓库名>:latest --format '{{ index .Config.Labels "org.opencontainers.image.version" }}'
+```
+
+如果想完全避免 `latest` 缓存误判，可以把 compose 里的镜像固定为：
+
+```text
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.3
+```
 
 启动后检查服务：
 
