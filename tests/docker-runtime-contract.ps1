@@ -70,7 +70,7 @@ Assert-Contains $compose 'JM_PREFETCH_PAGES:\s*"10"' 'prefetch defaults to 10 pa
 Assert-Contains $compose 'JM_PAGE_CACHE_TTL' 'page cache ttl environment setting'
 Assert-Contains $compose 'JM_CHAPTER_CACHE_TTL' 'chapter cache ttl environment setting'
 Assert-Contains $compose 'JM_PAGE_CACHE_MAX_ITEM_BYTES' 'page cache max item bytes environment setting'
-Assert-Contains $compose 'PHP_CLI_SERVER_WORKERS:\s*"4"' 'PHP CLI server workers setting'
+Assert-Contains $compose 'PHP_CLI_SERVER_WORKERS:\s*"10"' 'PHP CLI server workers setting'
 Assert-NotContains $compose '/app/cache' 'file cache volume'
 Assert-NotContains $dockerfile '8080' 'stale Dockerfile port 8080'
 Assert-NotContains $compose '8080' 'stale compose port 8080'

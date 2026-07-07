@@ -43,7 +43,7 @@ services:
       JM_PAGE_CACHE_TTL: "3600"
       JM_CHAPTER_CACHE_TTL: "21600"
       JM_PAGE_CACHE_MAX_ITEM_BYTES: "104857600"
-      PHP_CLI_SERVER_WORKERS: "4"
+      PHP_CLI_SERVER_WORKERS: "10"
     restart: unless-stopped
 ```
 
