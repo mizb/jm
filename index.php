@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.07.2';
+    public const APP_VERSION    = '2026.07.07.3';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -81,8 +81,20 @@ final class JmConfig
     public const DEFAULT_PAGE_CACHE_TTL    = 3600;
     public const DEFAULT_CHAPTER_CACHE_TTL = 21600;
     public const DEFAULT_PREFETCH_PAGES = 10;
+    public const DEFAULT_PREFETCH_HIGH_PRIORITY_PAGES = 2;
     public const DEFAULT_PAGE_CACHE_MAX_ITEM_BYTES = 104857600;
     public const DEFAULT_PAGE_CACHE_MAX_BYTES = 104857600;
+    public const DEFAULT_SINGLEFLIGHT_LOCK_TTL = 30;
+    public const DEFAULT_SINGLEFLIGHT_WAIT_MS = 5000;
+    public const DEFAULT_PREFETCH_MIN_FREE_BYTES = 33554432;
+    public const DEFAULT_PREFETCH_MIN_FREE_RATIO = 15;
+    public const DEFAULT_PAGE_CACHE_MIN_FREE_BYTES = 16777216;
+    public const DEFAULT_PAGE_CACHE_MIN_FREE_RATIO = 8;
+    public const DEFAULT_NEXT_CHAPTER_PREFETCH_PAGES = 2;
+    public const DEFAULT_NEXT_CHAPTER_PREFETCH_PROGRESS = 80;
+    public const DEFAULT_NEXT_CHAPTER_PREFETCH_REMAINING = 6;
+    public const DEFAULT_DOMAIN_COOLDOWN_SECONDS = 120;
+    public const DEFAULT_DOMAIN_STATS_TTL = 21600;
 }
 
 
@@ -252,6 +264,65 @@ final class MemoryCache
         return apcu_store($this->prefix . $key, $value, $ttl);
     }
 
+    public function tryAdd(string $key, mixed $value, int $ttl): bool
+    {
+        if (!$this->enabled || $ttl <= 0) return false;
+        return apcu_add($this->prefix . $key, $value, $ttl);
+    }
+
+    public function delete(string $key): bool
+    {
+        if (!$this->enabled) return false;
+        return apcu_delete($this->prefix . $key);
+    }
+
+    public function compareAndDelete(string $key, string $expectedToken): bool
+    {
+        if (!$this->enabled) return false;
+
+        $success = false;
+        $value = apcu_fetch($this->prefix . $key, $success);
+        if (!$success || !is_string($value) || !hash_equals($expectedToken, $value)) {
+            return false;
+        }
+
+        return apcu_delete($this->prefix . $key);
+    }
+
+    public function memoryState(): array
+    {
+        $state = [
+            'total_memory_bytes' => null,
+            'free_memory_bytes'  => null,
+            'used_memory_bytes'  => null,
+            'free_ratio'         => null,
+        ];
+
+        if (!$this->enabled || !function_exists('apcu_sma_info')) {
+            return $state;
+        }
+
+        $sma = @apcu_sma_info(true);
+        if (!is_array($sma)) {
+            return $state;
+        }
+
+        $total = null;
+        if (isset($sma['num_seg'], $sma['seg_size'])) {
+            $total = (int) $sma['num_seg'] * (int) $sma['seg_size'];
+        }
+        $free = isset($sma['avail_mem']) ? (int) $sma['avail_mem'] : null;
+
+        $state['total_memory_bytes'] = $total;
+        $state['free_memory_bytes'] = $free;
+        $state['used_memory_bytes'] = ($total !== null && $free !== null) ? max(0, $total - $free) : null;
+        $state['free_ratio'] = ($total !== null && $total > 0 && $free !== null)
+            ? (int) floor(($free * 100) / $total)
+            : null;
+
+        return $state;
+    }
+
     public function diagnostics(): array
     {
         $details = [
@@ -259,6 +330,7 @@ final class MemoryCache
             'total_memory_bytes' => null,
             'free_memory_bytes'  => null,
             'used_memory_bytes'  => null,
+            'free_ratio'         => null,
             'entries'            => null,
             'hits'               => null,
             'misses'             => null,
@@ -266,19 +338,7 @@ final class MemoryCache
 
         if (!$this->enabled) return $details;
 
-        if (function_exists('apcu_sma_info')) {
-            $sma = @apcu_sma_info(true);
-            if (is_array($sma)) {
-                $total = null;
-                if (isset($sma['num_seg'], $sma['seg_size'])) {
-                    $total = (int) $sma['num_seg'] * (int) $sma['seg_size'];
-                }
-                $free = isset($sma['avail_mem']) ? (int) $sma['avail_mem'] : null;
-                $details['total_memory_bytes'] = $total;
-                $details['free_memory_bytes'] = $free;
-                $details['used_memory_bytes'] = ($total !== null && $free !== null) ? max(0, $total - $free) : null;
-            }
-        }
+        $details = array_merge($details, $this->memoryState());
 
         if (function_exists('apcu_cache_info')) {
             $info = @apcu_cache_info(true);
@@ -293,16 +353,161 @@ final class MemoryCache
     }
 }
 
+final class DomainHealth
+{
+    private const KEY_PREFIX = 'domain-health:';
+
+    private MemoryCache $cache;
+    private array $domainsInOriginalOrder;
+
+    public function __construct(array $domainsInOriginalOrder)
+    {
+        $this->cache = new MemoryCache();
+        $this->domainsInOriginalOrder = array_values($domainsInOriginalOrder);
+    }
+
+    public function orderedDomains(array $domains): array
+    {
+        $domainsInOriginalOrder = array_values($domains);
+        if (!$this->cache->isAvailable() || empty($domainsInOriginalOrder)) {
+            return $domainsInOriginalOrder;
+        }
+
+        $now = time();
+        $ranked = [];
+        $available = 0;
+        foreach ($domainsInOriginalOrder as $index => $domain) {
+            $stats = $this->stats($domain);
+            $cooldownUntil = (int) ($stats['cooldown_until'] ?? 0);
+            $isAvailable = $cooldownUntil <= $now;
+            if ($isAvailable) $available++;
+            $ranked[] = [
+                'domain' => $domain,
+                'index' => $index,
+                'available' => $isAvailable,
+                'failure_streak' => (int) ($stats['failure_streak'] ?? 0),
+                'ewma_latency_ms' => ((int) ($stats['ewma_latency_ms'] ?? 0)) > 0
+                    ? (int) $stats['ewma_latency_ms']
+                    : PHP_INT_MAX,
+            ];
+        }
+
+        if ($available === 0) {
+            return $domainsInOriginalOrder;
+        }
+
+        usort($ranked, function (array $left, array $right): int {
+            if ($left['available'] !== $right['available']) {
+                return $left['available'] ? -1 : 1;
+            }
+            $failureCompare = $left['failure_streak'] <=> $right['failure_streak'];
+            if ($failureCompare !== 0) return $failureCompare;
+            $latencyCompare = $left['ewma_latency_ms'] <=> $right['ewma_latency_ms'];
+            if ($latencyCompare !== 0) return $latencyCompare;
+            return $left['index'] <=> $right['index'];
+        });
+
+        return array_map(fn(array $item) => $item['domain'], $ranked);
+    }
+
+    public function markSuccess(string $domain, int $latencyMs): void
+    {
+        if (!$this->cache->isAvailable()) return;
+
+        $stats = $this->stats($domain);
+        $oldLatency = (int) ($stats['ewma_latency_ms'] ?? 0);
+        $stats['success_count'] = (int) ($stats['success_count'] ?? 0) + 1;
+        $stats['failure_streak'] = 0;
+        $stats['cooldown_until'] = 0;
+        $stats['ewma_latency_ms'] = $oldLatency > 0
+            ? (int) round(($oldLatency * 0.7) + ($latencyMs * 0.3))
+            : max(1, $latencyMs);
+        $this->saveStats($domain, $stats);
+    }
+
+    public function markFailure(string $domain, bool $hardFailure = true): void
+    {
+        if (!$this->cache->isAvailable()) return;
+
+        $stats = $this->stats($domain);
+        $stats['failure_count'] = (int) ($stats['failure_count'] ?? 0) + 1;
+        $stats['last_failure_at'] = time();
+        if ($hardFailure) {
+            $streak = (int) ($stats['failure_streak'] ?? 0) + 1;
+            $cooldown = min(
+                600,
+                self::envInt('JM_DOMAIN_COOLDOWN_SECONDS', JmConfig::DEFAULT_DOMAIN_COOLDOWN_SECONDS, 0, 3600) * $streak
+            );
+            $stats['failure_streak'] = $streak;
+            $stats['cooldown_until'] = time() + $cooldown;
+        }
+        $this->saveStats($domain, $stats);
+    }
+
+    public static function diagnostics(array $domains): array
+    {
+        $health = new self($domains);
+        return [
+            'stats_available' => $health->cache->isAvailable(),
+            'order' => $health->orderedDomains($domains),
+            'cooldown_seconds' => self::envInt('JM_DOMAIN_COOLDOWN_SECONDS', JmConfig::DEFAULT_DOMAIN_COOLDOWN_SECONDS, 0, 3600),
+            'stats_ttl_seconds' => self::envInt('JM_DOMAIN_STATS_TTL', JmConfig::DEFAULT_DOMAIN_STATS_TTL, 0, 86400),
+        ];
+    }
+
+    private function stats(string $domain): array
+    {
+        $cached = $this->cache->get($this->statsKey($domain));
+        if (!is_array($cached)) {
+            return [
+                'domain' => $domain,
+                'success_count' => 0,
+                'failure_count' => 0,
+                'failure_streak' => 0,
+                'last_failure_at' => 0,
+                'cooldown_until' => 0,
+                'ewma_latency_ms' => 0,
+            ];
+        }
+        return $cached;
+    }
+
+    private function saveStats(string $domain, array $stats): void
+    {
+        $stats['domain'] = $domain;
+        $this->cache->set(
+            $this->statsKey($domain),
+            $stats,
+            self::envInt('JM_DOMAIN_STATS_TTL', JmConfig::DEFAULT_DOMAIN_STATS_TTL, 0, 86400)
+        );
+    }
+
+    private function statsKey(string $domain): string
+    {
+        return self::KEY_PREFIX . md5($domain);
+    }
+
+    private static function envInt(string $name, int $default, int $min, int $max): int
+    {
+        $raw = getenv($name);
+        if ($raw === false || trim((string) $raw) === '') return $default;
+        if (!preg_match('/^\d+$/', trim((string) $raw))) return $default;
+        return min($max, max($min, (int) $raw));
+    }
+}
+
 final class JmApiClient
 {
     private JmHttpClient $http;
     private int $requestCount = 0;
     private array $domains;
+    private DomainHealth $domainHealth;
 
     public function __construct()
     {
         $this->http    = new JmHttpClient();
         $this->domains = self::resolveDomains();
+        $this->domainHealth = new DomainHealth($this->domains);
     }
 
     public function requestCount(): int { return $this->requestCount; }
@@ -324,34 +529,37 @@ final class JmApiClient
 
         $lastError = null;
 
-        foreach ($this->domains as $domain) {
+        foreach ($this->domainHealth->orderedDomains($this->domains) as $domain) {
             $url = "https://{$domain}{$urlPath}";
 
             for ($retry = 0; $retry <= JmConfig::MAX_RETRIES; $retry++) {
                 if ($retry > 0) usleep(300_000);
 
+                $requestStarted = microtime(true);
                 [$ok, $body, $statusCode] = $this->http->get($url, $headers);
+                $latencyMs = (int) round((microtime(true) - $requestStarted) * 1000);
                 $this->requestCount++;
 
-                if (!$ok)                  { $lastError = 'Network error'; continue; }
-                if ($statusCode >= 500)    { $lastError = "HTTP {$statusCode}"; continue; }
+                if (!$ok)                  { $this->domainHealth->markFailure($domain, true); $lastError = 'Network error'; continue; }
+                if ($statusCode >= 500)    { $this->domainHealth->markFailure($domain, true); $lastError = "HTTP {$statusCode}"; continue; }
 
                 $json = json_decode($body, true);
-                if ($json === null)        { continue; }
+                if ($json === null)        { $this->domainHealth->markFailure($domain, false); continue; }
 
                 $code = $json['code'] ?? -1;
-                if ($code !== 200)         { continue; }
+                if ($code !== 200)         { $this->domainHealth->markFailure($domain, false); continue; }
 
                 $enc = $json['data'] ?? '';
-                if ($enc === '')           { continue; }
+                if ($enc === '')           { $this->domainHealth->markFailure($domain, false); continue; }
 
                 try {
                     $decrypted = self::decrypt($enc, $ts);
-                } catch (\Throwable)       { continue; }
+                } catch (\Throwable)       { $this->domainHealth->markFailure($domain, false); continue; }
 
                 $resData = json_decode($decrypted, true);
-                if ($resData === null)     { continue; }
+                if ($resData === null)     { $this->domainHealth->markFailure($domain, false); continue; }
 
+                $this->domainHealth->markSuccess($domain, $latencyMs);
                 return ['ts' => $ts, 'data' => $resData];
             }
         }
@@ -381,16 +589,23 @@ final class JmApiClient
 
         $urlPath = JmConfig::ENDPOINT_SCRAMBLE . '?' . $query;
 
-        foreach ($this->domains as $domain) {
+        foreach ($this->domainHealth->orderedDomains($this->domains) as $domain) {
             $url = "https://{$domain}{$urlPath}";
             for ($retry = 0; $retry <= JmConfig::MAX_RETRIES; $retry++) {
                 if ($retry > 0) usleep(300_000);
+                $requestStarted = microtime(true);
                 [$ok, $body, $code] = $this->http->get($url, $headers);
+                $latencyMs = (int) round((microtime(true) - $requestStarted) * 1000);
                 $this->requestCount++;
-                if (!$ok || $code >= 500) continue;
+                if (!$ok || $code >= 500) {
+                    $this->domainHealth->markFailure($domain, true);
+                    continue;
+                }
                 if (preg_match('/var\s+scramble_id\s*=\s*(\d+);/', $body, $m)) {
+                    $this->domainHealth->markSuccess($domain, $latencyMs);
                     return $m[1];
                 }
+                $this->domainHealth->markFailure($domain, false);
             }
         }
 
@@ -583,6 +798,27 @@ final class JmAlbum
     /** @return list<string> */
     public function allPhotoIds(): array { return array_column($this->episodes, 'photo_id'); }
 
+    /** @return array<string,string> */
+    public function nextChapterMap(): array
+    {
+        $map = [];
+        $count = count($this->episodes);
+        for ($i = 0; $i < $count - 1; $i++) {
+            $current = (string) ($this->episodes[$i]['photo_id'] ?? '');
+            $next = (string) ($this->episodes[$i + 1]['photo_id'] ?? '');
+            if ($current !== '' && $next !== '') {
+                $map[$current] = $next;
+            }
+        }
+        return $map;
+    }
+
+    public function nextPhotoId(string $photoId): ?string
+    {
+        $map = $this->nextChapterMap();
+        return $map[$photoId] ?? null;
+    }
+
     /** @return list<array{photo_id:string, title:string, sort:string}> */
     public function chapterHeaders(): array
     {
@@ -654,9 +890,9 @@ final class JmChapter
         return $self;
     }
 
-    public function toArray(?string $albumId = null, ?string $publicBaseUrl = null): array
+    public function toArray(?string $albumId = null, ?string $publicBaseUrl = null, ?string $nextChapterId = null): array
     {
-        $images = array_map(function (array $image) use ($albumId, $publicBaseUrl): array {
+        $images = array_map(function (array $image) use ($albumId, $publicBaseUrl, $nextChapterId): array {
             $sourceUrl = (string) ($image['url'] ?? '');
             $page = (int) ($image['index'] ?? 0);
             $segments = (int) ($image['decode_segments'] ?? 0);
@@ -669,7 +905,7 @@ final class JmChapter
                 : self::imageMime($extension);
 
             if ($albumId !== null && $publicBaseUrl !== null && $page > 0) {
-                $image['url'] = buildDecodedPageUrl($publicBaseUrl, $albumId, $this->photoId, $page);
+                $image['url'] = buildDecodedPageUrl($publicBaseUrl, $albumId, $this->photoId, $page, $nextChapterId);
             }
 
             return $image;
@@ -1040,70 +1276,121 @@ final class JmService
         return $chapter;
     }
 
-    /** @return array{bytes:string, mime:string, codec:string, cache_hit:bool} */
-    public function fetchDecodedPage(string $photoId, int $page): array
+    public function fetchReaderManifest(string $photoId): array
     {
         $scrambleId = $this->fetchScrambleId($photoId);
-        $chapter = $this->fetchChapter($photoId, $scrambleId);
-        $image = $chapter->images[$page - 1] ?? null;
-
-        if ($image === null) {
-            throw new SecurityException("页码 {$page} 超出范围 1-{$chapter->pageCount}", 400);
-        }
-
-        $segments = (int) ($image['decode_segments'] ?? 0);
-        $extension = self::imageExtension((string) ($image['filename'] ?? 'page.jpg'));
-        $mime = self::imageMime($extension);
-        $cacheKey = self::decodedPageCacheKey($photoId, $page, $image);
+        $cacheKey = self::readerManifestCacheKey($photoId, $scrambleId);
         $cached = $this->cache->get($cacheKey);
-        if (is_array($cached) && isset($cached['bytes'], $cached['mime'])) {
-            return [
-                'bytes' => (string) $cached['bytes'],
-                'mime' => (string) $cached['mime'],
-                'codec' => (string) ($cached['codec'] ?? self::codecFromMime((string) $cached['mime'])),
-                'cache_hit' => true,
+        if (is_array($cached) && isset($cached['photo_id'], $cached['images']) && is_array($cached['images'])) {
+            return $cached;
+        }
+
+        $chapter = $this->fetchChapter($photoId, $scrambleId);
+        $images = [];
+        foreach ($chapter->images as $image) {
+            $page = (int) ($image['index'] ?? 0);
+            if ($page < 1) continue;
+
+            $filename = (string) ($image['filename'] ?? 'page.jpg');
+            $extension = self::imageExtension($filename);
+            $segments = (int) ($image['decode_segments'] ?? 0);
+            $sourceUrl = (string) ($image['url'] ?? '');
+            $images[] = [
+                'index' => $page,
+                'filename' => $filename,
+                'url' => $sourceUrl,
+                'source_url' => $sourceUrl,
+                'mime' => ($segments > 0 && $extension !== 'gif')
+                    ? ScrambleDecoder::preferredDecodedMime()
+                    : self::imageMime($extension),
+                'scramble_id' => $scrambleId,
+                'decode_segments' => $segments,
+                'cache_key' => self::decodedPageCacheKey($photoId, $page, $image),
             ];
         }
 
-        $raw = $this->api->downloadImage($image['url']);
-
-        if ($extension === 'gif' || $segments === 0) {
-            $result = [
-                'bytes' => $raw,
-                'mime' => $mime,
-                'codec' => self::codecFromMime($mime),
-                'cache_hit' => false,
-            ];
-            $this->cacheDecodedPage($cacheKey, $result);
-            return $result;
-        }
-
-        $decoded = ScrambleDecoder::decodeBytesWithInfo($raw, $segments);
-        $result = [
-            'bytes' => $decoded['bytes'],
-            'mime' => $decoded['mime'],
-            'codec' => $decoded['codec'],
-            'cache_hit' => false,
+        $manifest = [
+            'photo_id' => $photoId,
+            'scramble_id' => $scrambleId,
+            'page_count' => $chapter->pageCount,
+            'images' => $images,
         ];
-        $this->cacheDecodedPage($cacheKey, $result);
-        return $result;
+
+        $this->cache->set(
+            $cacheKey,
+            $manifest,
+            self::envInt('JM_CHAPTER_CACHE_TTL', JmConfig::DEFAULT_CHAPTER_CACHE_TTL, 0, 86400)
+        );
+
+        return $manifest;
     }
 
-    public function maybePrefetchPages(string $photoId, int $page, bool $enabled): void
+    /** @return array{bytes:string, mime:string, codec:string, cache_hit:bool, singleflight:string, cache_store:string, apcu_free:?int} */
+    public function fetchDecodedPage(string $photoId, int $page): array
+    {
+        $manifest = $this->fetchReaderManifest($photoId);
+        $image = $manifest['images'][$page - 1] ?? null;
+
+        if ($image === null) {
+            throw new SecurityException("页码 {$page} 超出范围 1-{$manifest['page_count']}", 400);
+        }
+
+        $cacheKey = (string) ($image['cache_key'] ?? self::decodedPageCacheKey($photoId, $page, $image));
+        $cached = $this->cachedDecodedPage($cacheKey);
+        if ($cached !== null) return $cached + ['singleflight' => 'hit'];
+
+        return $this->singleFlight($cacheKey, fn(): array => $this->materializeDecodedPage($cacheKey, $image));
+    }
+
+    public function maybePrefetchPages(string $photoId, int $page, bool $enabled, ?string $nextChapterId = null): string
     {
         $pages = self::envInt('JM_PREFETCH_PAGES', JmConfig::DEFAULT_PREFETCH_PAGES, 0, 30);
-        if (!$enabled || $pages <= 0 || !$this->cache->isAvailable()) return;
+        if (!$enabled) return 'disabled';
+        if ($pages <= 0) return 'none';
+        if (!$this->cache->isAvailable()) return 'skipped-no-apcu';
+        if (!$this->prefetchWaterlineOk()) return 'skipped-low-memory';
 
-        register_shutdown_function(function () use ($photoId, $page, $pages): void {
+        $nextChapterId = normalizeNextChapterHint($nextChapterId);
+        $prefetchNextChapter = $this->shouldPrefetchNextChapter($photoId, $page, $nextChapterId);
+
+        register_shutdown_function(function () use ($photoId, $page, $pages, $nextChapterId, $prefetchNextChapter): void {
             $this->prefetchDecodedPages($photoId, $page + 1, $pages);
+            if ($prefetchNextChapter && $nextChapterId !== null) {
+                $this->prefetchNextChapter($nextChapterId);
+            }
         });
+
+        return 'scheduled';
     }
 
     public function prefetchDecodedPages(string $photoId, int $startPage, int $count): void
     {
-        for ($offset = 0; $offset < $count; $offset++) {
-            $candidatePage = $startPage + $offset;
+        $highCount = min($count, self::envInt('JM_PREFETCH_HIGH_PRIORITY_PAGES', JmConfig::DEFAULT_PREFETCH_HIGH_PRIORITY_PAGES, 0, 10));
+        $highPriorityPages = $highCount > 0 ? range($startPage, $startPage + $highCount - 1) : [];
+        $lowPriorityPages = [];
+        if ($count > $highCount) {
+            $lowPriorityPages = range($startPage + $highCount, $startPage + $count - 1);
+        }
+
+        foreach ($highPriorityPages as $candidatePage) {
             try {
+                if ($this->isDecodedPageCached($photoId, $candidatePage)) {
+                    continue;
+                }
+                $this->fetchDecodedPage($photoId, $candidatePage);
+            } catch (SecurityException) {
+                break;
+            } catch (\Throwable $e) {
+                error_log('[jm-api] prefetch failed: ' . $e->getMessage());
+                break;
+            }
+        }
+
+        foreach ($lowPriorityPages as $candidatePage) {
+            try {
+                if (!$this->prefetchWaterlineOk()) {
+                    break;
+                }
                 if ($this->isDecodedPageCached($photoId, $candidatePage)) {
                     continue;
                 }
@@ -1135,17 +1422,131 @@ final class JmService
 
     public function requestCount(): int { return $this->api->requestCount(); }
 
-    private function cacheDecodedPage(string $cacheKey, array $result): void
+    public static function runtimeDiagnostics(MemoryCache $cache): array
     {
-        $maxBytes = self::envInt(
-            'JM_PAGE_CACHE_MAX_ITEM_BYTES',
-            self::envInt('JM_PAGE_CACHE_MAX_BYTES', JmConfig::DEFAULT_PAGE_CACHE_MAX_ITEM_BYTES, 0, 512 * 1024 * 1024),
-            0,
-            512 * 1024 * 1024
-        );
-        if ($maxBytes > 0 && strlen((string) ($result['bytes'] ?? '')) > $maxBytes) return;
+        return [
+            'singleflight' => [
+                'enabled' => $cache->isAvailable(),
+                'lock_ttl_seconds' => self::envInt('JM_SINGLEFLIGHT_LOCK_TTL', JmConfig::DEFAULT_SINGLEFLIGHT_LOCK_TTL, 1, 300),
+                'wait_ms' => self::envInt('JM_SINGLEFLIGHT_WAIT_MS', JmConfig::DEFAULT_SINGLEFLIGHT_WAIT_MS, 0, 30000),
+            ],
+            'prefetch' => [
+                'default_pages' => self::envInt('JM_PREFETCH_PAGES', JmConfig::DEFAULT_PREFETCH_PAGES, 0, 30),
+                'high_priority_pages' => self::envInt('JM_PREFETCH_HIGH_PRIORITY_PAGES', JmConfig::DEFAULT_PREFETCH_HIGH_PRIORITY_PAGES, 0, 10),
+                'next_chapter_pages' => self::envInt('JM_NEXT_CHAPTER_PREFETCH_PAGES', JmConfig::DEFAULT_NEXT_CHAPTER_PREFETCH_PAGES, 0, 5),
+                'low_memory_policy' => 'skip-low-priority-then-all',
+            ],
+            'cache_policy' => [
+                'max_item_bytes' => self::pageCacheMaxItemBytes(),
+                'page_cache_min_free_bytes' => self::envInt('JM_PAGE_CACHE_MIN_FREE_BYTES', JmConfig::DEFAULT_PAGE_CACHE_MIN_FREE_BYTES, 0, 512 * 1024 * 1024),
+                'page_cache_min_free_ratio' => self::envInt('JM_PAGE_CACHE_MIN_FREE_RATIO', JmConfig::DEFAULT_PAGE_CACHE_MIN_FREE_RATIO, 0, 100),
+                'prefetch_min_free_bytes' => self::envInt('JM_PREFETCH_MIN_FREE_BYTES', JmConfig::DEFAULT_PREFETCH_MIN_FREE_BYTES, 0, 512 * 1024 * 1024),
+                'prefetch_min_free_ratio' => self::envInt('JM_PREFETCH_MIN_FREE_RATIO', JmConfig::DEFAULT_PREFETCH_MIN_FREE_RATIO, 0, 100),
+            ],
+        ];
+    }
 
-        $this->cache->set(
+    private function materializeDecodedPage(string $cacheKey, array $image): array
+    {
+        $segments = (int) ($image['decode_segments'] ?? 0);
+        $extension = self::imageExtension((string) ($image['filename'] ?? 'page.jpg'));
+        $mime = self::imageMime($extension);
+        $raw = $this->api->downloadImage((string) ($image['url'] ?? ''));
+
+        if ($extension === 'gif' || $segments === 0) {
+            $result = [
+                'bytes' => $raw,
+                'mime' => $mime,
+                'codec' => self::codecFromMime($mime),
+                'cache_hit' => false,
+            ];
+            $result['cache_store'] = $this->cacheDecodedPage($cacheKey, $result);
+            $result['apcu_free'] = $this->apcuFreeBytes();
+            return $result;
+        }
+
+        $decoded = ScrambleDecoder::decodeBytesWithInfo($raw, $segments);
+        $result = [
+            'bytes' => $decoded['bytes'],
+            'mime' => $decoded['mime'],
+            'codec' => $decoded['codec'],
+            'cache_hit' => false,
+        ];
+        $result['cache_store'] = $this->cacheDecodedPage($cacheKey, $result);
+        $result['apcu_free'] = $this->apcuFreeBytes();
+        return $result;
+    }
+
+    private function singleFlight(string $cacheKey, callable $producer): array
+    {
+        if (!$this->cache->isAvailable()) {
+            $result = $producer();
+            $result['singleflight'] = 'disabled';
+            return $result;
+        }
+
+        $lockKey = 'lock:' . $cacheKey;
+        $token = self::lockToken();
+        $lockTtl = self::envInt('JM_SINGLEFLIGHT_LOCK_TTL', JmConfig::DEFAULT_SINGLEFLIGHT_LOCK_TTL, 1, 300);
+
+        if ($this->cache->tryAdd($lockKey, $token, $lockTtl)) {
+            try {
+                $cached = $this->cachedDecodedPage($cacheKey);
+                if ($cached !== null) {
+                    $cached['singleflight'] = 'hit-after-wait';
+                    return $cached;
+                }
+
+                $result = $producer();
+                $result['singleflight'] = 'owner';
+                return $result;
+            } finally {
+                $this->cache->compareAndDelete($lockKey, $token);
+            }
+        }
+
+        $waitMs = self::envInt('JM_SINGLEFLIGHT_WAIT_MS', JmConfig::DEFAULT_SINGLEFLIGHT_WAIT_MS, 0, 30000);
+        $waitStart = microtime(true);
+        while ((int) round((microtime(true) - $waitStart) * 1000) < $waitMs) {
+            usleep(random_int(50_000, 150_000));
+            $cached = $this->cachedDecodedPage($cacheKey);
+            if ($cached !== null) {
+                $cached['singleflight'] = 'hit-after-wait';
+                return $cached;
+            }
+        }
+
+        $result = $producer();
+        $result['singleflight'] = 'timeout';
+        return $result;
+    }
+
+    private function cachedDecodedPage(string $cacheKey): ?array
+    {
+        $cached = $this->cache->get($cacheKey);
+        if (!is_array($cached) || !isset($cached['bytes'], $cached['mime'])) {
+            return null;
+        }
+
+        return [
+            'bytes' => (string) $cached['bytes'],
+            'mime' => (string) $cached['mime'],
+            'codec' => (string) ($cached['codec'] ?? self::codecFromMime((string) $cached['mime'])),
+            'cache_hit' => true,
+            'cache_store' => 'hit',
+            'apcu_free' => $this->apcuFreeBytes(),
+        ];
+    }
+
+    private function cacheDecodedPage(string $cacheKey, array $result): string
+    {
+        if (!$this->cache->isAvailable()) return 'disabled';
+
+        $maxBytes = self::pageCacheMaxItemBytes();
+        if ($maxBytes > 0 && strlen((string) ($result['bytes'] ?? '')) > $maxBytes) return 'skipped-too-large';
+        if (!$this->pageCacheWaterlineOk()) return 'skipped-low-memory';
+
+        $stored = $this->cache->set(
             $cacheKey,
             [
                 'bytes' => (string) $result['bytes'],
@@ -1154,21 +1555,97 @@ final class JmService
             ],
             self::envInt('JM_PAGE_CACHE_TTL', JmConfig::DEFAULT_PAGE_CACHE_TTL, 0, 86400)
         );
+
+        return $stored ? 'stored' : 'disabled';
     }
 
     private function isDecodedPageCached(string $photoId, int $page): bool
     {
-        $scrambleId = $this->fetchScrambleId($photoId);
-        $chapter = $this->fetchChapter($photoId, $scrambleId);
-        $image = $chapter->images[$page - 1] ?? null;
+        $manifest = $this->fetchReaderManifest($photoId);
+        $image = $manifest['images'][$page - 1] ?? null;
 
         if ($image === null) {
-            throw new SecurityException("页码 {$page} 超出范围 1-{$chapter->pageCount}", 400);
+            throw new SecurityException("页码 {$page} 超出范围 1-{$manifest['page_count']}", 400);
         }
 
-        $cacheKey = self::decodedPageCacheKey($photoId, $page, $image);
-        $cached = $this->cache->get($cacheKey);
-        return is_array($cached) && isset($cached['bytes'], $cached['mime']);
+        return $this->cachedDecodedPage((string) ($image['cache_key'] ?? self::decodedPageCacheKey($photoId, $page, $image))) !== null;
+    }
+
+    private function shouldPrefetchNextChapter(string $photoId, int $page, ?string $nextChapterId): bool
+    {
+        if ($nextChapterId === null || $nextChapterId === $photoId) return false;
+        if (!self::envBool('JM_NEXT_CHAPTER_PREFETCH', true)) return false;
+
+        try {
+            $manifest = $this->fetchReaderManifest($photoId);
+            $pageCount = (int) ($manifest['page_count'] ?? 0);
+            if ($pageCount <= 0) return false;
+
+            $remaining = $pageCount - $page;
+            $progress = (int) floor(($page * 100) / $pageCount);
+            return $remaining <= self::envInt('JM_NEXT_CHAPTER_PREFETCH_REMAINING', JmConfig::DEFAULT_NEXT_CHAPTER_PREFETCH_REMAINING, 0, 1000)
+                || $progress >= self::envInt('JM_NEXT_CHAPTER_PREFETCH_PROGRESS', JmConfig::DEFAULT_NEXT_CHAPTER_PREFETCH_PROGRESS, 1, 100);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function prefetchNextChapter(string $nextChapterId): void
+    {
+        $pages = self::envInt('JM_NEXT_CHAPTER_PREFETCH_PAGES', JmConfig::DEFAULT_NEXT_CHAPTER_PREFETCH_PAGES, 0, 5);
+        for ($page = 1; $page <= $pages; $page++) {
+            try {
+                if (!$this->prefetchWaterlineOk()) break;
+                if ($this->isDecodedPageCached($nextChapterId, $page)) continue;
+                $this->fetchDecodedPage($nextChapterId, $page);
+            } catch (SecurityException) {
+                break;
+            } catch (\Throwable $e) {
+                error_log('[jm-api] next chapter prefetch failed: ' . $e->getMessage());
+                break;
+            }
+        }
+    }
+
+    private function prefetchWaterlineOk(): bool
+    {
+        return $this->memoryWaterlineOk(
+            self::envInt('JM_PREFETCH_MIN_FREE_BYTES', JmConfig::DEFAULT_PREFETCH_MIN_FREE_BYTES, 0, 512 * 1024 * 1024),
+            self::envInt('JM_PREFETCH_MIN_FREE_RATIO', JmConfig::DEFAULT_PREFETCH_MIN_FREE_RATIO, 0, 100),
+            false
+        );
+    }
+
+    private function pageCacheWaterlineOk(): bool
+    {
+        return $this->memoryWaterlineOk(
+            self::envInt('JM_PAGE_CACHE_MIN_FREE_BYTES', JmConfig::DEFAULT_PAGE_CACHE_MIN_FREE_BYTES, 0, 512 * 1024 * 1024),
+            self::envInt('JM_PAGE_CACHE_MIN_FREE_RATIO', JmConfig::DEFAULT_PAGE_CACHE_MIN_FREE_RATIO, 0, 100),
+            true
+        );
+    }
+
+    private function memoryWaterlineOk(int $minFreeBytes, int $minFreeRatio, bool $allowUnknown): bool
+    {
+        if (!$this->cache->isAvailable()) return false;
+
+        $state = $this->cache->memoryState();
+        $free = $state['free_memory_bytes'];
+        $ratio = $state['free_ratio'];
+        if ($free === null || $ratio === null) return $allowUnknown;
+
+        return (int) $free >= $minFreeBytes && (int) $ratio >= $minFreeRatio;
+    }
+
+    private function apcuFreeBytes(): ?int
+    {
+        $free = $this->cache->memoryState()['free_memory_bytes'] ?? null;
+        return is_int($free) ? $free : null;
+    }
+
+    private static function readerManifestCacheKey(string $photoId, string $scrambleId): string
+    {
+        return 'manifest:' . md5($photoId . ':' . $scrambleId);
     }
 
     private static function decodedPageCacheKey(string $photoId, int $page, array $image): string
@@ -1182,12 +1659,37 @@ final class JmService
         ]));
     }
 
+    private static function pageCacheMaxItemBytes(): int
+    {
+        return self::envInt(
+            'JM_PAGE_CACHE_MAX_ITEM_BYTES',
+            self::envInt('JM_PAGE_CACHE_MAX_BYTES', JmConfig::DEFAULT_PAGE_CACHE_MAX_ITEM_BYTES, 0, 512 * 1024 * 1024),
+            0,
+            512 * 1024 * 1024
+        );
+    }
+
+    private static function lockToken(): string
+    {
+        return bin2hex(random_bytes(8)) . ':' . (function_exists('getmypid') ? (string) getmypid() : '0');
+    }
+
     private static function envInt(string $name, int $default, int $min, int $max): int
     {
         $raw = getenv($name);
         if ($raw === false || trim((string) $raw) === '') return $default;
         if (!preg_match('/^\d+$/', trim((string) $raw))) return $default;
         return min($max, max($min, (int) $raw));
+    }
+
+    private static function envBool(string $name, bool $default): bool
+    {
+        $raw = getenv($name);
+        if ($raw === false || trim((string) $raw) === '') return $default;
+        $normalized = strtolower(trim((string) $raw));
+        if (in_array($normalized, ['0', 'false', 'off', 'no'], true)) return false;
+        if (in_array($normalized, ['1', 'true', 'on', 'yes'], true)) return true;
+        return $default;
     }
 
     private function listResultFromItems(string $mode, int $page, array $items, int $total): JmListResult
@@ -1548,13 +2050,18 @@ function requestBaseUrl(): string
     return "{$proto}://{$host}{$basePath}";
 }
 
-function buildDecodedPageUrl(string $baseUrl, string $albumId, string $chapterId, int $page): string
+function buildDecodedPageUrl(string $baseUrl, string $albumId, string $chapterId, int $page, ?string $nextChapterId = null): string
 {
-    return rtrim($baseUrl, '/') . '/?' . http_build_query([
+    $params = [
         'jmid'    => $albumId,
         'chapter' => $chapterId,
         'page'    => (string) $page,
-    ]);
+    ];
+    if ($nextChapterId !== null && $nextChapterId !== '') {
+        $params['next_chapter'] = $nextChapterId;
+    }
+
+    return rtrim($baseUrl, '/') . '/?' . http_build_query($params);
 }
 
 function buildCoverUrl(string $albumId, string $image): string
@@ -1621,6 +2128,13 @@ function isPrefetchEnabled(mixed $value): bool
     return !in_array($raw, ['0', 'false', 'off', 'no'], true);
 }
 
+function normalizeNextChapterHint(mixed $value): ?string
+{
+    if (!is_scalar($value)) return null;
+    $raw = trim((string) $value);
+    return preg_match('/^\d{1,20}$/', $raw) === 1 ? $raw : null;
+}
+
 function isDirectNumericChapterImageRequest(mixed $chapterParam, mixed $pageParam): bool
 {
     if (!is_scalar($chapterParam) || !is_scalar($pageParam)) return false;
@@ -1630,7 +2144,7 @@ function isDirectNumericChapterImageRequest(mixed $chapterParam, mixed $pagePara
 }
 
 /** @return never */
-function sendBinaryImage(string $bytes, string $mime, bool $cacheHit = false, string $codec = 'original'): void
+function sendBinaryImage(string $bytes, string $mime, bool $cacheHit = false, string $codec = 'original', array $diagnostics = []): void
 {
     http_response_code(200);
     header('Content-Type: ' . $mime);
@@ -1638,6 +2152,12 @@ function sendBinaryImage(string $bytes, string $mime, bool $cacheHit = false, st
     header('Cache-Control: private, max-age=86400');
     header('X-JM-Cache: ' . ($cacheHit ? 'HIT' : 'MISS'));
     header('X-JM-Image-Codec: ' . $codec);
+    header('X-JM-Singleflight: ' . (string) ($diagnostics['singleflight'] ?? 'disabled'));
+    header('X-JM-Prefetch: ' . (string) ($diagnostics['prefetch'] ?? 'none'));
+    header('X-JM-Cache-Store: ' . (string) ($diagnostics['cache_store'] ?? ($cacheHit ? 'hit' : 'disabled')));
+    if (isset($diagnostics['apcu_free']) && $diagnostics['apcu_free'] !== null) {
+        header('X-JM-APCu-Free: ' . (string) $diagnostics['apcu_free']);
+    }
     header('X-Content-Type-Options: nosniff');
     header('X-Frame-Options: DENY');
     echo $bytes;
@@ -1707,11 +2227,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 if (($_GET['health'] ?? '') === '1') {
     $memoryCache = new MemoryCache();
+    $runtimeDiagnostics = JmService::runtimeDiagnostics($memoryCache);
     $report = [
         'app_version'  => jmApiVersion(),
         'php'          => PHP_VERSION,
         'apcu'         => $memoryCache->isAvailable(),
         'apcu_details' => $memoryCache->diagnostics(),
+        'singleflight' => $runtimeDiagnostics['singleflight'],
+        'prefetch'     => $runtimeDiagnostics['prefetch'],
+        'cache_policy' => $runtimeDiagnostics['cache_policy'],
+        'domains'      => DomainHealth::diagnostics(JmConfig::API_DOMAINS),
         'redis'        => (new RedisStore())->isAvailable(),
         'memory'       => memory_get_usage(true),
     ];
@@ -1803,12 +2328,23 @@ try {
             sendError(400, $e->getMessage());
         }
 
-        $service->maybePrefetchPages($chapterId, $page, isPrefetchEnabled($_GET['prefetch'] ?? '1'));
+        $prefetchStatus = $service->maybePrefetchPages(
+            $chapterId,
+            $page,
+            isPrefetchEnabled($_GET['prefetch'] ?? '1'),
+            normalizeNextChapterHint($_GET['next_chapter'] ?? null)
+        );
         sendBinaryImage(
             $image['bytes'],
             $image['mime'],
             (bool) ($image['cache_hit'] ?? false),
-            (string) ($image['codec'] ?? 'original')
+            (string) ($image['codec'] ?? 'original'),
+            [
+                'singleflight' => (string) ($image['singleflight'] ?? 'disabled'),
+                'cache_store' => (string) ($image['cache_store'] ?? 'disabled'),
+                'prefetch' => $prefetchStatus,
+                'apcu_free' => $image['apcu_free'] ?? null,
+            ]
         );
     }
 
@@ -1837,12 +2373,23 @@ try {
         } catch (SecurityException $e) {
             sendError(400, $e->getMessage());
         }
-        $service->maybePrefetchPages($fetchIds[0], $page, isPrefetchEnabled($_GET['prefetch'] ?? '1'));
+        $prefetchStatus = $service->maybePrefetchPages(
+            $fetchIds[0],
+            $page,
+            isPrefetchEnabled($_GET['prefetch'] ?? '1'),
+            $album->nextPhotoId($fetchIds[0])
+        );
         sendBinaryImage(
             $image['bytes'],
             $image['mime'],
             (bool) ($image['cache_hit'] ?? false),
-            (string) ($image['codec'] ?? 'original')
+            (string) ($image['codec'] ?? 'original'),
+            [
+                'singleflight' => (string) ($image['singleflight'] ?? 'disabled'),
+                'cache_store' => (string) ($image['cache_store'] ?? 'disabled'),
+                'prefetch' => $prefetchStatus,
+                'apcu_free' => $image['apcu_free'] ?? null,
+            ]
         );
     }
 
@@ -1869,13 +2416,14 @@ try {
     }
 
     $result = $service->fetchChapters($fetchIds);
+    $nextChapterMap = $album->nextChapterMap();
 
     $response = [
         'code'    => 200,
         'success' => true,
         'data'    => [
             'album'            => $album->toArray(),
-            'chapters'         => array_map(fn(JmChapter $ch) => $ch->toArray($album->id, $publicBaseUrl), $result['chapters']),
+            'chapters'         => array_map(fn(JmChapter $ch) => $ch->toArray($album->id, $publicBaseUrl, $nextChapterMap[$ch->photoId] ?? null), $result['chapters']),
             'chapters_total'   => count($episodes),
             'chapters_fetched' => count($result['chapters']),
             'elapsed_ms'       => elapsedMs($startMs),

@@ -122,6 +122,11 @@ Assert-True (-not [string]::IsNullOrWhiteSpace([string] $healthJson.diagnostics.
 Assert-True ($healthJson.diagnostics.apcu -eq $true) 'health=1 did not report APCu enabled.'
 Assert-True ($null -ne $healthJson.diagnostics.apcu_details) 'health=1 did not include apcu_details.'
 Assert-True ($null -ne $healthJson.diagnostics.apcu_details.free_memory_bytes) 'health=1 did not include APCu free memory.'
+Assert-True ($null -ne $healthJson.diagnostics.apcu_details.free_ratio) 'health=1 did not include APCu free ratio.'
+Assert-True ($null -ne $healthJson.diagnostics.singleflight) 'health=1 did not include singleflight diagnostics.'
+Assert-True ($null -ne $healthJson.diagnostics.prefetch) 'health=1 did not include prefetch diagnostics.'
+Assert-True ($null -ne $healthJson.diagnostics.cache_policy) 'health=1 did not include cache policy diagnostics.'
+Assert-True ($null -ne $healthJson.diagnostics.domains) 'health=1 did not include domain health diagnostics.'
 
 $latestUrl = "${BaseUrl}/?list=latest&page=1&format=min"
 $latest = Invoke-JmRequest -Url $latestUrl
@@ -139,6 +144,9 @@ Assert-True ($metadataJson.data.album.album_id -eq $AlbumId) "Album metadata ret
 $firstImage = Invoke-JmRequest -Method 'HEAD' -Url (Get-ImageUrl -ImagePage $Page)
 Assert-HeaderExists $firstImage.Headers 'X-JM-Cache'
 Assert-HeaderExists $firstImage.Headers 'X-JM-Image-Codec'
+Assert-HeaderExists $firstImage.Headers 'X-JM-Singleflight'
+Assert-HeaderExists $firstImage.Headers 'X-JM-Prefetch'
+Assert-HeaderExists $firstImage.Headers 'X-JM-Cache-Store'
 Assert-HeaderEquals $firstImage.Headers 'X-JM-Cache' 'MISS'
 
 $secondImage = Invoke-JmRequest -Method 'HEAD' -Url (Get-ImageUrl -ImagePage $Page)

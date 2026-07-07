@@ -38,11 +38,22 @@ services:
     ports:
       - "8088:8088"
     environment:
-      JM_API_VERSION: "2026.07.07.2"
+      JM_API_VERSION: "2026.07.07.3"
       JM_PREFETCH_PAGES: "10"
+      JM_PREFETCH_HIGH_PRIORITY_PAGES: "2"
+      JM_PREFETCH_MIN_FREE_BYTES: "33554432"
+      JM_PREFETCH_MIN_FREE_RATIO: "15"
       JM_PAGE_CACHE_TTL: "3600"
       JM_CHAPTER_CACHE_TTL: "21600"
       JM_PAGE_CACHE_MAX_ITEM_BYTES: "104857600"
+      JM_PAGE_CACHE_MIN_FREE_BYTES: "16777216"
+      JM_PAGE_CACHE_MIN_FREE_RATIO: "8"
+      JM_SINGLEFLIGHT_LOCK_TTL: "30"
+      JM_SINGLEFLIGHT_WAIT_MS: "5000"
+      JM_NEXT_CHAPTER_PREFETCH: "1"
+      JM_NEXT_CHAPTER_PREFETCH_PAGES: "2"
+      JM_DOMAIN_COOLDOWN_SECONDS: "120"
+      JM_DOMAIN_STATS_TTL: "21600"
       PHP_CLI_SERVER_WORKERS: "10"
     restart: unless-stopped
 ```
@@ -67,7 +78,7 @@ docker logs jmcomic-api
 看到类似下面这行，就能判断容器加载的是哪一版：
 
 ```text
-JM API version 2026.07.07.2
+JM API version 2026.07.07.3
 ```
 
 `health=1` 会返回顶层 `version` 和 `diagnostics.app_version`。所有响应也会带 `X-JM-API-Version` 头，所以直接 `php -S` 和 Docker 启动都能通过接口确认当前运行版本。
@@ -90,7 +101,7 @@ Docker-capable hosts can run the full runtime verifier after deployment (`script
 powershell -ExecutionPolicy Bypass -File .\scripts\runtime-verify.ps1
 ```
 
-The verifier builds and recreates the container, checks `health=1`, album metadata, image cache HIT behavior, `X-JM-Image-Codec`, default prefetch, `prefetch=0`, the absence of `/app/cache`, and that no decoded image files are written under `/app`.
+The verifier builds and recreates the container, checks `health=1`, album metadata, image cache HIT behavior, `X-JM-Image-Codec`, `X-JM-Singleflight`, `X-JM-Prefetch`, `X-JM-Cache-Store`, default prefetch, `prefetch=0`, the absence of `/app/cache`, and that no decoded image files are written under `/app`.
 
 ```bash
 # 拿目录
@@ -298,9 +309,9 @@ GET /?jmid=350234&chapter=413446
 {
   "code": 200,
   "success": true,
-  "version": "2026.07.07.2",
+  "version": "2026.07.07.3",
   "diagnostics": {
-    "app_version": "2026.07.07.2",
+    "app_version": "2026.07.07.3",
     "php": "8.5.7",
     "apcu": true,
     "apcu_details": {
@@ -345,7 +356,13 @@ When `chapter` is a numeric photo ID and `page` is present, the API takes a dire
 
 Decoded scrambled still images prefer WebP quality 85 when GD supports WebP, and fall back to JPEG quality 85. GIF and non-scrambled images are returned without re-encoding. The image endpoint returns `X-JM-Cache: HIT/MISS` and `X-JM-Image-Codec: webp/jpeg/gif/png/original`.
 
-By default, a request for page `N` schedules a post-response prefetch of `N+1` through `N+10`. Use `prefetch=0` to disable prefetch for one image request. Prefetch skips pages already in APCu memory cache and stops at the first out-of-range page or upstream failure.
+By default, a request for page `N` schedules a post-response prefetch of `N+1` through `N+10`. The API now treats `N+1` and `N+2` as high-priority pages, then attempts `N+3` through `N+10` as low-priority work. Use `prefetch=0` to disable prefetch for one image request. Prefetch skips pages already in APCu memory cache, stops at the first out-of-range page or upstream failure, and skips low-priority work when APCu free memory falls below `JM_PREFETCH_MIN_FREE_BYTES` or `JM_PREFETCH_MIN_FREE_RATIO`.
+
+Concurrent requests for the same decoded page use an APCu single-flight lock. One worker downloads/decodes the page while other workers wait briefly for the cache entry. Image responses expose `X-JM-Singleflight: hit|owner|hit-after-wait|timeout|disabled` and `X-JM-Cache-Store: stored|skipped-too-large|skipped-low-memory|disabled|hit`.
+
+When a chapter response is generated with album context, image URLs include a `next_chapter` hint when the next reading chapter is known. Near the end of a chapter, the API can preheat the next chapter's first pages without making direct image requests fetch album metadata.
+
+Upstream API domains are scored in APCu with success/failure counts, failure streak, short cooldown, and EWMA latency. `JM_DOMAIN_COOLDOWN_SECONDS` controls the base cooldown. If every domain is cooling down, the API falls back to the original domain order and still tries the request.
 
 接口会先校验 `chapter` 是否属于指定 `jmid`，再从章节图片列表中按 1-based `page` 取图、下载原图、按 `decode_segments` 解乱序并输出图片。该接口不会接受任意外部图片 URL，因此不会作为开放代理使用。
 
@@ -408,9 +425,12 @@ Redis 不可用时优雅降级 — 不限流。
 ```
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
-X-JM-API-Version: 2026.07.07.2
+X-JM-API-Version: 2026.07.07.3
 X-JM-Cache: HIT|MISS
 X-JM-Image-Codec: webp|jpeg|gif|png|original
+X-JM-Singleflight: hit|owner|hit-after-wait|timeout|disabled
+X-JM-Prefetch: scheduled|disabled|skipped-no-apcu|skipped-low-memory|none
+X-JM-Cache-Store: stored|skipped-too-large|skipped-low-memory|disabled|hit
 Retry-After: 60         (限流时)
 X-Powered-By: (已移除)
 ```

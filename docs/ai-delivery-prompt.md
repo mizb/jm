@@ -1,5 +1,11 @@
 # AI Delivery Prompt
 
+The advanced reader optimization round has been implemented in API version `2026.07.07.3`. For future audit or follow-up maintenance, prefer the newer prompt at:
+
+`D:\jm\jm-boom-master\jmcomic-api-main\docs\advanced-reader-optimization-ai-prompt.md`
+
+It includes APCu single-flight, tiered prefetch, optional next-chapter preheat, APCu waterline behavior, and upstream domain health scoring. The prompt below remains useful for maintaining the already implemented baseline.
+
 Use this prompt when handing the project to another AI coding agent.
 
 ```text

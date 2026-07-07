@@ -1,5 +1,12 @@
 # JM API Optimization Design
 
+Advanced follow-up design:
+
+- `D:\jm\jm-boom-master\jmcomic-api-main\docs\advanced-reader-optimization-design.md`
+- `D:\jm\jm-boom-master\jmcomic-api-main\docs\advanced-reader-optimization-ai-prompt.md`
+
+Use the advanced design for the next implementation round that adopts the original reader ideas: APCu single-flight, tiered prefetch, optional next-chapter preheat, APCu waterline behavior, and upstream domain health scoring.
+
 ## Goal
 
 Build a reliable, fast, Suwayomi-compatible JM API service that keeps the current external contract stable while reducing repeated upstream calls, image decode cost, and reader latency.
@@ -19,9 +26,20 @@ The current implementation is PHP 8.3 in `index.php`, served by PHP's built-in s
 
 ```yaml
 JM_PREFETCH_PAGES: "10"
+JM_PREFETCH_HIGH_PRIORITY_PAGES: "2"
+JM_PREFETCH_MIN_FREE_BYTES: "33554432"
+JM_PREFETCH_MIN_FREE_RATIO: "15"
 JM_PAGE_CACHE_TTL: "3600"
 JM_CHAPTER_CACHE_TTL: "21600"
 JM_PAGE_CACHE_MAX_ITEM_BYTES: "104857600"
+JM_PAGE_CACHE_MIN_FREE_BYTES: "16777216"
+JM_PAGE_CACHE_MIN_FREE_RATIO: "8"
+JM_SINGLEFLIGHT_LOCK_TTL: "30"
+JM_SINGLEFLIGHT_WAIT_MS: "5000"
+JM_NEXT_CHAPTER_PREFETCH: "1"
+JM_NEXT_CHAPTER_PREFETCH_PAGES: "2"
+JM_DOMAIN_COOLDOWN_SECONDS: "120"
+JM_DOMAIN_STATS_TTL: "21600"
 PHP_CLI_SERVER_WORKERS: "10"
 ```
 
@@ -31,13 +49,19 @@ The API now has:
 - In-memory cache for API domains, scramble IDs, chapter metadata, and decoded page bytes.
 - `X-JM-Cache: HIT/MISS` image response header.
 - `X-JM-Image-Codec` image response header.
+- `X-JM-Singleflight`, `X-JM-Prefetch`, `X-JM-Cache-Store`, and optional `X-JM-APCu-Free` image response headers.
 - `prefetch=0` query parameter to disable prefetch for one image request.
 - Correct scramble segment calculation using the page name without extension.
 - Direct numeric chapter image requests that skip the album metadata request.
+- Lightweight reader manifest cache for decoded page metadata.
+- APCu single-flight locking to avoid duplicate same-page materialization under worker concurrency.
 - APCu health diagnostics with total/free/used memory and hit/miss counters where APCu exposes them.
+- APCu waterline diagnostics and cache policy diagnostics.
+- Upstream API domain health scoring with failure streak, cooldown, and EWMA latency.
 - Decoded scrambled still images encoded as WebP quality 85 when GD supports WebP, otherwise JPEG quality 85.
 - GIF and non-scrambled images returned without re-encoding.
-- Prefetch that skips already cached pages and stops on out-of-range/upstream failures.
+- Tiered prefetch that skips already cached pages and stops on out-of-range/upstream failures.
+- Optional next-chapter preheat using `next_chapter` hints on API-generated image URLs.
 - Album metadata includes an `image` cover URL for detail thumbnails.
 - Album chapter metadata preserves every distinct `photo_id`; duplicated or missing upstream `sort` values are normalized into a continuous reading order so Suwayomi can keep stable start/resume/next-chapter behavior.
 
@@ -152,6 +176,12 @@ Static contract coverage is in place for:
 
 - Direct numeric chapter image path before album lookup.
 - APCu health diagnostics.
+- APCu single-flight snippets and response headers.
+- Lightweight reader manifest cache.
+- APCu memory waterline snippets and diagnostics.
+- Tiered prefetch snippets.
+- Optional next-chapter preheat snippets.
+- Domain health scoring snippets.
 - In-memory decoded page cache with `X-JM-Cache`.
 - `X-JM-Image-Codec`.
 - WebP 85 preferred output, JPEG 85 fallback.
