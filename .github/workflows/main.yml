@@ -12,7 +12,7 @@ permissions:
   packages: write
 
 env:
-  JM_API_VERSION: 2026.07.07.3
+  JM_API_VERSION: 2026.07.07.7
 
 jobs:
   docker:
