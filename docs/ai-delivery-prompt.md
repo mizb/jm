@@ -1,6 +1,6 @@
 # AI Delivery Prompt
 
-The advanced reader optimization round has been implemented in API version `2026.07.07.3`. For future audit or follow-up maintenance, prefer the newer prompt at:
+The advanced reader optimization round plus homepage/weekly-list follow-up have been implemented in API version `2026.07.07.7`. For future audit or follow-up maintenance, prefer the newer prompt at:
 
 `D:\jm\jm-boom-master\jmcomic-api-main\docs\advanced-reader-optimization-ai-prompt.md`
 

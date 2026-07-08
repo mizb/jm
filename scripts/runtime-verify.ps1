@@ -135,6 +135,20 @@ Assert-True ($latestJson.success -eq $true) "Latest list request failed: ${lates
 Assert-True ($latestJson.data.mode -eq 'latest') 'Latest list returned an unexpected mode.'
 Assert-True ($latestJson.data.page -eq 1) 'Latest list did not preserve client page=1.'
 
+$promoteUrl = "${BaseUrl}/?list=promote&page=1&format=min"
+$promote = Invoke-JmRequest -Url $promoteUrl
+$promoteJson = $promote.Content | ConvertFrom-Json
+Assert-True ($promoteJson.success -eq $true) "Promote list request failed: ${promoteUrl}"
+Assert-True ($promoteJson.data.mode -eq 'promote') 'Promote list returned an unexpected mode.'
+Assert-True ($promoteJson.data.page -eq 1) 'Promote list did not preserve client page=1.'
+
+$weeklyUrl = "${BaseUrl}/?list=weekly&page=1&format=min"
+$weekly = Invoke-JmRequest -Url $weeklyUrl
+$weeklyJson = $weekly.Content | ConvertFrom-Json
+Assert-True ($weeklyJson.success -eq $true) "Weekly list request failed: ${weeklyUrl}"
+Assert-True ($weeklyJson.data.mode -eq 'weekly') 'Weekly list returned an unexpected mode.'
+Assert-True ($weeklyJson.data.page -eq 1) 'Weekly list did not preserve client page=1.'
+
 $metadataUrl = "${BaseUrl}/?jmid=$AlbumId&format=min"
 $metadata = Invoke-JmRequest -Url $metadataUrl
 $metadataJson = $metadata.Content | ConvertFrom-Json

@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.07.3';
+    public const APP_VERSION    = '2026.07.07.7';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -36,6 +36,10 @@ final class JmConfig
     public const ENDPOINT_LATEST   = '/latest';
     public const ENDPOINT_SEARCH   = '/search';
     public const ENDPOINT_CATEGORY_FILTER = '/categories/filter';
+    public const ENDPOINT_PROMOTE = '/promote';
+    public const ENDPOINT_PROMOTE_LIST = '/promote_list';
+    public const ENDPOINT_WEEK = '/week';
+    public const ENDPOINT_WEEK_FILTER = '/week/filter';
 
     public const SCRAMBLE_220980 = 220980;
     public const SCRAMBLE_268850 = 268850;
@@ -134,14 +138,18 @@ final class JmHttpClient
 
         $body = curl_exec($this->ch);
         $err  = curl_errno($this->ch);
+        $statusCode = (int) curl_getinfo($this->ch, CURLINFO_HTTP_CODE);
 
         if ($err !== 0) {
-            return [false, 'cURL [' . $err . ']: ' . curl_error($this->ch), 0];
+            return [false, 'cURL [' . $err . ']: ' . curl_error($this->ch), $statusCode];
         }
-        if ($body === false || $body === '') {
-            return [false, 'Empty response', (int) curl_getinfo($this->ch, CURLINFO_HTTP_CODE)];
+        if ($body === false) {
+            return [false, 'Empty response', $statusCode];
         }
-        return [true, $body, (int) curl_getinfo($this->ch, CURLINFO_HTTP_CODE)];
+        if ($body === '' && $statusCode === 0) {
+            return [false, 'Empty response', $statusCode];
+        }
+        return [true, $body, $statusCode];
     }
 }
 
@@ -160,7 +168,10 @@ final class RedisStore
         $this->prefix = $prefix;
         try {
             $r = new \Redis();
-            if ($r->connect('127.0.0.1', 6379, 0.5)) {
+            $host = self::envString('REDIS_HOST', '127.0.0.1');
+            $port = self::envInt('REDIS_PORT', 6379, 1, 65535);
+            $timeout = self::envInt('REDIS_TIMEOUT_MS', 500, 1, 30000) / 1000;
+            if ($r->connect($host, $port, $timeout)) {
                 $r->setOption(\Redis::OPT_PREFIX, $prefix);
                 $this->redis = $r;
                 return;
@@ -194,12 +205,13 @@ final class RedisStore
         if ($count >= $max) {
             // Get oldest entry to calculate retry-after
             $oldest = $this->redis->zRange($k, 0, 0, true);
-            $retry  = $oldest ? ((int) array_key_first($oldest) + $window - $now) : $window;
+            $oldestScore = $oldest ? (int) reset($oldest) : null;
+            $retry  = $oldestScore !== null ? ($oldestScore + $window - $now) : $window;
             return [false, 0, max(1, $retry)];
         }
 
-        // Add current timestamp as score+member with microsecond uniqueness
-        $this->redis->zAdd($k, (float) $now, (string) ($now . '.' . ($count + 1)));
+        // Add current timestamp as score plus a collision-resistant member.
+        $this->redis->zAdd($k, (float) $now, self::redisRateMember());
         $this->redis->expire($k, $window + 10);
 
         return [true, $max - $count - 1, 0];
@@ -226,6 +238,37 @@ final class RedisStore
         $c = $this->redis->incr($key);
         if ($c === 1) $this->redis->expire($key, $ttl);
         return $c;
+    }
+
+    /** Add a member to an expiring set and return distinct member count. */
+    public function addToExpiringSetAndCount(string $key, string $member, int $ttl): int
+    {
+        if (!$this->redis) return 1;
+        $now = time();
+        $this->redis->zRemRangeByScore($key, '-inf', (string) ($now - $ttl));
+        $this->redis->zAdd($key, (float) $now, $member);
+        $this->redis->expire($key, $ttl + 10);
+        return (int) $this->redis->zCard($key);
+    }
+
+    private static function envString(string $name, string $default): string
+    {
+        $raw = getenv($name);
+        if ($raw === false || trim((string) $raw) === '') return $default;
+        return trim((string) $raw);
+    }
+
+    private static function envInt(string $name, int $default, int $min, int $max): int
+    {
+        $raw = getenv($name);
+        if ($raw === false || trim((string) $raw) === '') return $default;
+        if (!preg_match('/^\d+$/', trim((string) $raw))) return $default;
+        return min($max, max($min, (int) $raw));
+    }
+
+    private static function redisRateMember(): string
+    {
+        return sprintf('%.6F:%s', microtime(true), bin2hex(random_bytes(4)));
     }
 }
 
@@ -353,6 +396,157 @@ final class MemoryCache
     }
 }
 
+final class ApiFailure
+{
+    public const KIND_NETWORK = 'network';
+    public const KIND_HTTP_RETRYABLE = 'http_retryable';
+    public const KIND_HTTP_CLIENT = 'http_client';
+    public const KIND_BUSINESS = 'business';
+    public const KIND_ENVELOPE_JSON = 'envelope_json';
+    public const KIND_ENVELOPE_SHAPE = 'envelope_shape';
+    public const KIND_DECRYPT = 'decrypt';
+    public const KIND_PAYLOAD_JSON = 'payload_json';
+    public const KIND_PAYLOAD_SHAPE = 'payload_shape';
+    public const KIND_SCRAMBLE_TEMPLATE = 'scramble_template';
+
+    private function __construct(
+        private string $kind,
+        private string $message,
+        private bool $hardDomainFailure,
+        private int $httpStatus = 0,
+    ) {}
+
+    public static function network(string $message): self
+    {
+        return new self(self::KIND_NETWORK, $message !== '' ? $message : 'network error', true);
+    }
+
+    public static function http(int $statusCode): ?self
+    {
+        if ($statusCode >= 500 || $statusCode === 0) {
+            return new self(self::KIND_HTTP_RETRYABLE, "HTTP {$statusCode}", true, $statusCode);
+        }
+        if ($statusCode >= 400) {
+            return new self(self::KIND_HTTP_CLIENT, "HTTP {$statusCode}", false, $statusCode);
+        }
+        return null;
+    }
+
+    public static function business(mixed $code, string $message = ''): self
+    {
+        $codeText = is_scalar($code) ? (string) $code : 'unknown';
+        $detail = $message !== '' ? $message : "JM business code {$codeText}";
+        return new self(self::KIND_BUSINESS, $detail, false);
+    }
+
+    public static function envelopeJson(string $message): self
+    {
+        return new self(self::KIND_ENVELOPE_JSON, $message, false);
+    }
+
+    public static function envelopeShape(string $message): self
+    {
+        return new self(self::KIND_ENVELOPE_SHAPE, $message, false);
+    }
+
+    public static function decrypt(string $message): self
+    {
+        return new self(self::KIND_DECRYPT, $message, false);
+    }
+
+    public static function payloadJson(string $message): self
+    {
+        return new self(self::KIND_PAYLOAD_JSON, $message, false);
+    }
+
+    public static function payloadShape(string $message): self
+    {
+        return new self(self::KIND_PAYLOAD_SHAPE, $message, false);
+    }
+
+    public static function scrambleTemplate(string $message): self
+    {
+        return new self(self::KIND_SCRAMBLE_TEMPLATE, $message, false);
+    }
+
+    public function kind(): string
+    {
+        return $this->kind;
+    }
+
+    public function message(): string
+    {
+        return $this->message;
+    }
+
+    public function hardDomainFailure(): bool
+    {
+        return $this->hardDomainFailure;
+    }
+
+    public function shouldRetry(): bool
+    {
+        return in_array($this->kind, [self::KIND_NETWORK, self::KIND_HTTP_RETRYABLE], true);
+    }
+
+    public function httpStatus(): int
+    {
+        return $this->httpStatus;
+    }
+
+    public static function publicException(?self $failure): JmException
+    {
+        if ($failure === null) {
+            return new JmException('API 域名全部不可用', 502);
+        }
+        return new JmException('API 请求失败: ' . $failure->kind() . ' - ' . $failure->message(), 502);
+    }
+}
+
+final class PayloadNormalizer
+{
+    public static function scalarString(mixed $value, string $default = ''): string
+    {
+        if (is_scalar($value)) return (string) $value;
+        return $default;
+    }
+
+    public static function scalarInt(mixed $value, int $default = 0): int
+    {
+        if (is_int($value)) return $value;
+        if (is_float($value)) return (int) $value;
+        if (is_string($value) && preg_match('/^-?\d+$/', trim($value)) === 1) return (int) trim($value);
+        return $default;
+    }
+
+    public static function listArray(mixed $value): array
+    {
+        if (!is_array($value)) return [];
+        return array_values($value);
+    }
+
+    public static function assocArray(mixed $value): array
+    {
+        return is_array($value) ? $value : [];
+    }
+
+    public static function stringList(mixed $value): array
+    {
+        if (!is_array($value)) {
+            $value = is_scalar($value) ? [$value] : [];
+        }
+
+        $result = [];
+        foreach ($value as $item) {
+            if (!is_scalar($item)) continue;
+            $text = trim((string) $item);
+            if ($text === '' || in_array($text, $result, true)) continue;
+            $result[] = $text;
+        }
+        return $result;
+    }
+}
+
 final class DomainHealth
 {
     private const KEY_PREFIX = 'domain-health:';
@@ -425,13 +619,15 @@ final class DomainHealth
         $this->saveStats($domain, $stats);
     }
 
-    public function markFailure(string $domain, bool $hardFailure = true): void
+    public function markFailure(string $domain, bool $hardFailure = true, string $kind = 'unknown', string $message = ''): void
     {
         if (!$this->cache->isAvailable()) return;
 
         $stats = $this->stats($domain);
         $stats['failure_count'] = (int) ($stats['failure_count'] ?? 0) + 1;
         $stats['last_failure_at'] = time();
+        $stats['last_failure_kind'] = $kind;
+        $stats['last_failure_message'] = self::safeDiagnosticMessage($message);
         if ($hardFailure) {
             $streak = (int) ($stats['failure_streak'] ?? 0) + 1;
             $cooldown = min(
@@ -452,6 +648,7 @@ final class DomainHealth
             'order' => $health->orderedDomains($domains),
             'cooldown_seconds' => self::envInt('JM_DOMAIN_COOLDOWN_SECONDS', JmConfig::DEFAULT_DOMAIN_COOLDOWN_SECONDS, 0, 3600),
             'stats_ttl_seconds' => self::envInt('JM_DOMAIN_STATS_TTL', JmConfig::DEFAULT_DOMAIN_STATS_TTL, 0, 86400),
+            'stats' => array_map(fn(string $domain): array => $health->stats($domain), array_values($domains)),
         ];
     }
 
@@ -465,6 +662,8 @@ final class DomainHealth
                 'failure_count' => 0,
                 'failure_streak' => 0,
                 'last_failure_at' => 0,
+                'last_failure_kind' => null,
+                'last_failure_message' => null,
                 'cooldown_until' => 0,
                 'ewma_latency_ms' => 0,
             ];
@@ -485,6 +684,15 @@ final class DomainHealth
     private function statsKey(string $domain): string
     {
         return self::KEY_PREFIX . md5($domain);
+    }
+
+    private static function safeDiagnosticMessage(string $message): string
+    {
+        $message = trim(str_replace(["\r", "\n"], ' ', $message));
+        if (strlen($message) > 240) {
+            return substr($message, 0, 240);
+        }
+        return $message;
     }
 
     private static function envInt(string $name, int $default, int $min, int $max): int
@@ -527,7 +735,7 @@ final class JmApiClient
             'tokenparam: ' . $tokenparam,
         ];
 
-        $lastError = null;
+        $lastFailure = null;
 
         foreach ($this->domainHealth->orderedDomains($this->domains) as $domain) {
             $url = "https://{$domain}{$urlPath}";
@@ -540,31 +748,98 @@ final class JmApiClient
                 $latencyMs = (int) round((microtime(true) - $requestStarted) * 1000);
                 $this->requestCount++;
 
-                if (!$ok)                  { $this->domainHealth->markFailure($domain, true); $lastError = 'Network error'; continue; }
-                if ($statusCode >= 500)    { $this->domainHealth->markFailure($domain, true); $lastError = "HTTP {$statusCode}"; continue; }
+                if (!$ok) {
+                    $lastFailure = ApiFailure::network($body);
+                    $this->recordApiFailure($lastFailure, $domain, $path, $retry, $statusCode);
+                    if (!$lastFailure->shouldRetry()) {
+                        throw ApiFailure::publicException($lastFailure);
+                    }
+                    continue;
+                }
 
-                $json = json_decode($body, true);
-                if ($json === null)        { $this->domainHealth->markFailure($domain, false); continue; }
+                $httpFailure = ApiFailure::http($statusCode);
+                if ($httpFailure !== null) {
+                    $lastFailure = $httpFailure;
+                    $this->recordApiFailure($lastFailure, $domain, $path, $retry, $statusCode);
+                    if (!$lastFailure->shouldRetry()) {
+                        throw ApiFailure::publicException($lastFailure);
+                    }
+                    continue;
+                }
 
-                $code = $json['code'] ?? -1;
-                if ($code !== 200)         { $this->domainHealth->markFailure($domain, false); continue; }
+                try {
+                    $json = self::decodeJsonObject($body, 'api envelope');
+                } catch (\UnexpectedValueException $e) {
+                    $lastFailure = ApiFailure::envelopeShape($e->getMessage());
+                    $this->recordApiFailure($lastFailure, $domain, $path, $retry, $statusCode);
+                    if (!$lastFailure->shouldRetry()) {
+                        throw ApiFailure::publicException($lastFailure);
+                    }
+                    continue;
+                } catch (\Throwable $e) {
+                    $lastFailure = ApiFailure::envelopeJson($e->getMessage());
+                    $this->recordApiFailure($lastFailure, $domain, $path, $retry, $statusCode);
+                    if (!$lastFailure->shouldRetry()) {
+                        throw ApiFailure::publicException($lastFailure);
+                    }
+                    continue;
+                }
+
+                $code = PayloadNormalizer::scalarInt($json['code'] ?? -1, -1);
+                if ($code !== 200) {
+                    $lastFailure = ApiFailure::business($code, PayloadNormalizer::scalarString($json['message'] ?? $json['errorMsg'] ?? ''));
+                    $this->recordApiFailure($lastFailure, $domain, $path, $retry, $statusCode);
+                    if (!$lastFailure->shouldRetry()) {
+                        throw ApiFailure::publicException($lastFailure);
+                    }
+                    continue;
+                }
 
                 $enc = $json['data'] ?? '';
-                if ($enc === '')           { $this->domainHealth->markFailure($domain, false); continue; }
+                if (!is_string($enc) || $enc === '') {
+                    $lastFailure = ApiFailure::envelopeShape('api envelope data is empty or not a string');
+                    $this->recordApiFailure($lastFailure, $domain, $path, $retry, $statusCode);
+                    if (!$lastFailure->shouldRetry()) {
+                        throw ApiFailure::publicException($lastFailure);
+                    }
+                    continue;
+                }
 
                 try {
                     $decrypted = self::decrypt($enc, $ts);
-                } catch (\Throwable)       { $this->domainHealth->markFailure($domain, false); continue; }
+                } catch (\Throwable $e) {
+                    $lastFailure = ApiFailure::decrypt($e->getMessage());
+                    $this->recordApiFailure($lastFailure, $domain, $path, $retry, $statusCode);
+                    if (!$lastFailure->shouldRetry()) {
+                        throw ApiFailure::publicException($lastFailure);
+                    }
+                    continue;
+                }
 
-                $resData = json_decode($decrypted, true);
-                if ($resData === null)     { $this->domainHealth->markFailure($domain, false); continue; }
+                try {
+                    $resData = self::decodeJsonObject($decrypted, 'api payload');
+                } catch (\UnexpectedValueException $e) {
+                    $lastFailure = ApiFailure::payloadShape($e->getMessage());
+                    $this->recordApiFailure($lastFailure, $domain, $path, $retry, $statusCode);
+                    if (!$lastFailure->shouldRetry()) {
+                        throw ApiFailure::publicException($lastFailure);
+                    }
+                    continue;
+                } catch (\Throwable $e) {
+                    $lastFailure = ApiFailure::payloadJson($e->getMessage());
+                    $this->recordApiFailure($lastFailure, $domain, $path, $retry, $statusCode);
+                    if (!$lastFailure->shouldRetry()) {
+                        throw ApiFailure::publicException($lastFailure);
+                    }
+                    continue;
+                }
 
                 $this->domainHealth->markSuccess($domain, $latencyMs);
                 return ['ts' => $ts, 'data' => $resData];
             }
         }
 
-        throw new JmException('API 域名全部不可用', 502);
+        throw ApiFailure::publicException($lastFailure);
     }
 
     public function fetchScrambleId(string $photoId): string
@@ -588,6 +863,7 @@ final class JmApiClient
         ]);
 
         $urlPath = JmConfig::ENDPOINT_SCRAMBLE . '?' . $query;
+        $lastFailure = null;
 
         foreach ($this->domainHealth->orderedDomains($this->domains) as $domain) {
             $url = "https://{$domain}{$urlPath}";
@@ -597,18 +873,43 @@ final class JmApiClient
                 [$ok, $body, $code] = $this->http->get($url, $headers);
                 $latencyMs = (int) round((microtime(true) - $requestStarted) * 1000);
                 $this->requestCount++;
-                if (!$ok || $code >= 500) {
-                    $this->domainHealth->markFailure($domain, true);
+
+                if (!$ok) {
+                    $lastFailure = ApiFailure::network($body);
+                    $this->recordApiFailure($lastFailure, $domain, JmConfig::ENDPOINT_SCRAMBLE, $retry, $code);
+                    if (!$lastFailure->shouldRetry()) {
+                        $this->recordScrambleFallback($photoId, $lastFailure);
+                        return (string) JmConfig::SCRAMBLE_220980;
+                    }
                     continue;
                 }
+
+                $httpFailure = ApiFailure::http($code);
+                if ($httpFailure !== null) {
+                    $lastFailure = $httpFailure;
+                    $this->recordApiFailure($lastFailure, $domain, JmConfig::ENDPOINT_SCRAMBLE, $retry, $code);
+                    if (!$lastFailure->shouldRetry()) {
+                        $this->recordScrambleFallback($photoId, $lastFailure);
+                        return (string) JmConfig::SCRAMBLE_220980;
+                    }
+                    continue;
+                }
+
                 if (preg_match('/var\s+scramble_id\s*=\s*(\d+);/', $body, $m)) {
                     $this->domainHealth->markSuccess($domain, $latencyMs);
                     return $m[1];
                 }
-                $this->domainHealth->markFailure($domain, false);
+
+                $lastFailure = ApiFailure::scrambleTemplate('scramble_id missing from template');
+                $this->recordApiFailure($lastFailure, $domain, JmConfig::ENDPOINT_SCRAMBLE, $retry, $code);
+                if (!$lastFailure->shouldRetry()) {
+                    $this->recordScrambleFallback($photoId, $lastFailure);
+                    return (string) JmConfig::SCRAMBLE_220980;
+                }
             }
         }
 
+        $this->recordScrambleFallback($photoId, $lastFailure);
         return (string) JmConfig::SCRAMBLE_220980;
     }
 
@@ -637,6 +938,54 @@ final class JmApiClient
         }
 
         return $body;
+    }
+
+    private function recordApiFailure(ApiFailure $failure, string $domain, string $path, int $retry, int $statusCode = 0): void
+    {
+        $this->domainHealth->markFailure($domain, $failure->hardDomainFailure(), $failure->kind(), $failure->message());
+        error_log(sprintf(
+            '[jm-api] api failure kind=%s domain=%s path=%s status=%d retry=%d hard=%s message=%s',
+            $failure->kind(),
+            $domain,
+            $path,
+            $statusCode > 0 ? $statusCode : $failure->httpStatus(),
+            $retry,
+            $failure->hardDomainFailure() ? '1' : '0',
+            $failure->message()
+        ));
+    }
+
+    private function recordScrambleFallback(string $photoId, ?ApiFailure $failure): void
+    {
+        error_log(sprintf(
+            '[jm-api] scramble fallback photo_id=%s failure_kind=%s message=%s',
+            $photoId,
+            $failure?->kind() ?? 'none',
+            $failure?->message() ?? ''
+        ));
+
+        $cache = new MemoryCache();
+        if (!$cache->isAvailable()) return;
+
+        $count = $cache->get('diagnostics:scramble-fallback-count');
+        $cache->set('diagnostics:scramble-fallback-count', (int) $count + 1, 21600);
+        $cache->set('diagnostics:last-scramble-fallback', [
+            'photo_id' => $photoId,
+            'failure_kind' => $failure?->kind(),
+            'failure_message' => $failure?->message(),
+        ], 21600);
+    }
+
+    private static function decodeJsonObject(string $text, string $stage): array
+    {
+        $decoded = json_decode($text, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new \RuntimeException("{$stage} JSON decode failed: " . json_last_error_msg());
+        }
+        if (!is_array($decoded)) {
+            throw new \UnexpectedValueException("{$stage} JSON payload is not an object");
+        }
+        return $decoded;
     }
 
     // ── AES-256-ECB decrypt ──
@@ -671,8 +1020,8 @@ final class JmApiClient
     private static function resolveDomains(): array
     {
         $cache = new MemoryCache();
-        $cachedDomains = $cache->get('api-domains');
-        if (is_array($cachedDomains) && !empty($cachedDomains)) {
+        $cachedDomains = self::normalizeApiDomains($cache->get('api-domains'));
+        if (!empty($cachedDomains)) {
             return $cachedDomains;
         }
 
@@ -700,8 +1049,8 @@ final class JmApiClient
 
                 $plain = self::pkcs7Unpad($plain);
                 $data  = json_decode($plain, true);
-                $servers = $data['Server'] ?? null;
-                if (is_array($servers) && !empty($servers)) {
+                $servers = self::normalizeApiDomains($data['Server'] ?? null);
+                if (!empty($servers)) {
                     $cache->set('api-domains', $servers, 86400);
                     return $servers;
                 }
@@ -709,6 +1058,22 @@ final class JmApiClient
         }
 
         return JmConfig::API_DOMAINS;
+    }
+
+    public static function normalizeApiDomains(mixed $domains): array
+    {
+        if (!is_array($domains)) return [];
+
+        $normalized = [];
+        foreach ($domains as $domain) {
+            if (!is_scalar($domain)) continue;
+            $domain = strtolower(trim((string) $domain));
+            if ($domain === '') continue;
+            if (!preg_match('/^[a-z0-9.-]+$/', $domain)) continue;
+            if (isset($normalized[$domain])) continue;
+            $normalized[$domain] = $domain;
+        }
+        return array_values($normalized);
     }
 }
 
@@ -726,35 +1091,37 @@ final class JmAlbum
 
     private function __construct() {}
 
-    public static function fromApiResponse(array $data): self
+    public static function fromApiResponse(array $data, string $fallbackAlbumId = ''): self
     {
         $self = new self();
-        $self->id          = (string) $data['id'];
-        $self->name        = $data['name'] ?? '';
-        $self->author      = $data['author'] ?? [];
-        $self->description = $data['description'] ?? '';
-        $rawImage          = $data['image'] ?? '';
-        $self->image       = is_scalar($rawImage) ? (string) $rawImage : '';
-        $self->views       = $data['total_views'] ?? '0';
-        $self->likes       = $data['likes'] ?? '0';
-        $self->comments    = (string) ($data['comment_total'] ?? '0');
-        $self->tags        = $data['tags'] ?? [];
-        $self->works       = $data['works'] ?? [];
-        $self->actors      = $data['actors'] ?? [];
-        $self->related     = $data['related_list'] ?? [];
+        $self->id          = PayloadNormalizer::scalarString($data['id'] ?? $fallbackAlbumId);
+        $self->name        = PayloadNormalizer::scalarString($data['name'] ?? '');
+        $self->author      = PayloadNormalizer::stringList($data['author'] ?? []);
+        $self->description = PayloadNormalizer::scalarString($data['description'] ?? '');
+        $self->image       = PayloadNormalizer::scalarString($data['image'] ?? '');
+        $self->views       = PayloadNormalizer::scalarString($data['total_views'] ?? '0', '0');
+        $self->likes       = PayloadNormalizer::scalarString($data['likes'] ?? '0', '0');
+        $self->comments    = PayloadNormalizer::scalarString($data['comment_total'] ?? '0', '0');
+        $self->tags        = PayloadNormalizer::stringList($data['tags'] ?? []);
+        $self->works       = PayloadNormalizer::stringList($data['works'] ?? []);
+        $self->actors      = PayloadNormalizer::stringList($data['actors'] ?? []);
+        $self->related     = PayloadNormalizer::listArray($data['related_list'] ?? []);
 
         $episodes = [];
-        foreach ($data['series'] ?? [] as $sourceIndex => $ch) {
+        foreach (PayloadNormalizer::listArray($data['series'] ?? []) as $sourceIndex => $ch) {
+            if (!is_array($ch)) continue;
+            $photoId = PayloadNormalizer::scalarString($ch['id'] ?? '');
+            if ($photoId === '') continue;
             $episodes[] = [
-                'photo_id' => (string) $ch['id'],
-                'sort'     => (string) ($ch['sort'] ?? '1'),
-                'title'    => $ch['name'] ?? '',
+                'photo_id' => $photoId,
+                'sort'     => PayloadNormalizer::scalarString($ch['sort'] ?? '1', '1'),
+                'title'    => PayloadNormalizer::scalarString($ch['name'] ?? ''),
                 'source_index' => (int) $sourceIndex,
             ];
         }
 
-        if (empty($episodes)) {
-            $episodes[] = ['photo_id' => (string) $data['id'], 'sort' => '1', 'title' => $self->name];
+        if (empty($episodes) && $self->id !== '') {
+            $episodes[] = ['photo_id' => $self->id, 'sort' => '1', 'title' => $self->name];
         } else {
             $episodes = self::normalizeEpisodes($episodes);
         }
@@ -859,17 +1226,17 @@ final class JmChapter
 
     private function __construct() {}
 
-    public static function fromApiResponse(array $data, string $scrambleId): self
+    public static function fromApiResponse(array $data, string $scrambleId, string $fallbackPhotoId = ''): self
     {
         $self = new self();
-        $self->photoId   = (string) $data['id'];
-        $self->title     = $data['name'] ?? '';
-        $self->pageCount = count($data['images'] ?? []);
+        $self->photoId   = PayloadNormalizer::scalarString($data['id'] ?? $fallbackPhotoId);
+        $self->title     = PayloadNormalizer::scalarString($data['name'] ?? '');
 
         $sort = '1';
-        foreach ($data['series'] ?? [] as $ch) {
-            if ((string) $ch['id'] === (string) $data['id']) {
-                $sort = (string) ($ch['sort'] ?? '1');
+        foreach (PayloadNormalizer::listArray($data['series'] ?? []) as $ch) {
+            if (!is_array($ch)) continue;
+            if (PayloadNormalizer::scalarString($ch['id'] ?? '') === $self->photoId) {
+                $sort = PayloadNormalizer::scalarString($ch['sort'] ?? '1', '1');
                 break;
             }
         }
@@ -877,15 +1244,18 @@ final class JmChapter
 
         $cdn    = JmConfig::CDN_DOMAINS[array_rand(JmConfig::CDN_DOMAINS)];
         $images = [];
-        foreach ($data['images'] ?? [] as $i => $fn) {
+        foreach (PayloadNormalizer::listArray($data['images'] ?? []) as $i => $fn) {
+            $filename = PayloadNormalizer::scalarString($fn);
+            if ($filename === '') continue;
             $images[] = [
-                'index'           => $i + 1,
-                'filename'        => $fn,
-                'url'             => "https://{$cdn}/media/photos/{$self->photoId}/{$fn}",
+                'index'           => count($images) + 1,
+                'filename'        => $filename,
+                'url'             => "https://{$cdn}/media/photos/{$self->photoId}/{$filename}",
                 'scramble_id'     => $scrambleId,
-                'decode_segments' => ScrambleDecoder::segments($scrambleId, $self->photoId, $fn),
+                'decode_segments' => ScrambleDecoder::segments($scrambleId, $self->photoId, $filename),
             ];
         }
+        $self->pageCount = count($images);
         $self->images = $images;
         return $self;
     }
@@ -956,15 +1326,18 @@ final class JmListItem
     public static function fromPayload(array $item): self
     {
         $self = new self();
-        $self->id          = (string) ($item['id'] ?? $item['aid'] ?? $item['AID'] ?? '');
-        $self->name        = InputValidator::sanitizeString((string) ($item['name'] ?? 'JM ' . $self->id));
-        $self->author      = InputValidator::sanitizeString((string) ($item['author'] ?? ''));
-        $self->description = InputValidator::sanitizeString((string) ($item['description'] ?? ''));
-        $self->image       = (string) ($item['image'] ?? '');
+        $self->id          = PayloadNormalizer::scalarString($item['id'] ?? $item['aid'] ?? $item['AID'] ?? '');
+        $name              = PayloadNormalizer::scalarString($item['name'] ?? '');
+        $self->name        = InputValidator::sanitizeString($name !== '' ? $name : 'JM ' . $self->id);
+        $self->author      = InputValidator::sanitizeString(PayloadNormalizer::scalarString($item['author'] ?? ''));
+        $self->description = InputValidator::sanitizeString(PayloadNormalizer::scalarString($item['description'] ?? ''));
+        $self->image       = PayloadNormalizer::scalarString($item['image'] ?? '');
         $self->tags        = self::tagsFromPayload($item);
         $self->likes       = self::intFromPayload($item['likes'] ?? 0);
         $self->totalViews  = self::intFromPayload($item['total_views'] ?? $item['totalViews'] ?? 0);
-        $self->updatedAt   = isset($item['update_at']) ? self::intFromPayload($item['update_at']) : null;
+        $self->updatedAt   = isset($item['updated_at']) || isset($item['update_at'])
+            ? self::intFromPayload($item['updated_at'] ?? $item['update_at'])
+            : null;
 
         return $self;
     }
@@ -989,19 +1362,16 @@ final class JmListItem
         $tags = [];
         foreach (['category', 'category_sub'] as $key) {
             if (isset($item[$key]) && is_array($item[$key])) {
-                $title = trim((string) ($item[$key]['title'] ?? ''));
+                $title = trim(PayloadNormalizer::scalarString($item[$key]['title'] ?? ''));
                 if ($title !== '' && !in_array($title, $tags, true)) {
                     $tags[] = InputValidator::sanitizeString($title);
                 }
             }
         }
         foreach (['tags', 'works', 'actors'] as $key) {
-            $values = $item[$key] ?? [];
-            if (!is_array($values)) {
-                $values = [$values];
-            }
+            $values = PayloadNormalizer::listArray(is_array($item[$key] ?? null) ? $item[$key] : (isset($item[$key]) ? [$item[$key]] : []));
             foreach ($values as $value) {
-                $value = trim((string) $value);
+                $value = trim(PayloadNormalizer::scalarString($value));
                 if ($value !== '' && !in_array($value, $tags, true)) {
                     $tags[] = InputValidator::sanitizeString($value);
                 }
@@ -1012,10 +1382,7 @@ final class JmListItem
 
     private static function intFromPayload(mixed $value): int
     {
-        if (is_int($value)) return $value;
-        if (is_float($value)) return (int) $value;
-        if (is_string($value) && preg_match('/^\d+$/', trim($value))) return (int) trim($value);
-        return 0;
+        return PayloadNormalizer::scalarInt($value);
     }
 }
 
@@ -1192,6 +1559,8 @@ final class JmService
 {
     private const LOCAL_LIST_PAGE_SIZE = 20;
     private const SOURCE_LIST_PAGE_SIZE = 80;
+    private const PROMOTE_SOURCE_PAGE_SIZE = 27;
+    private const UNSUPPORTED_HOME_SECTION_TITLES = ['禁漫小说', '禁漫书库', '禁漫書庫', '禁漫小說'];
 
     private JmApiClient $api;
     private MemoryCache $cache;
@@ -1205,7 +1574,7 @@ final class JmService
     public function fetchAlbum(string $jmid): JmAlbum
     {
         $resp = $this->api->callJson(JmConfig::ENDPOINT_ALBUM, ['id' => $jmid]);
-        return JmAlbum::fromApiResponse($resp['data']);
+        return JmAlbum::fromApiResponse($resp['data'], $jmid);
     }
 
     public function fetchLatestList(int $page): JmListResult
@@ -1230,6 +1599,128 @@ final class JmService
         return $this->windowedListResultFromItems('popular', $page, $items, $total, $window);
     }
 
+    public function fetchPromoteList(int $page, int $sectionId = 0): JmListResult
+    {
+        if ($sectionId <= 0) {
+            return $this->fetchPromoteHomeList($page);
+        }
+
+        $window = self::promoteListWindow($page);
+        $sourcePage = (int) $window['source_page'];
+        $sourceHasMore = true;
+        $buffer = [];
+        $total = 0;
+
+        while (count($buffer) < $window['offset'] + self::LOCAL_LIST_PAGE_SIZE && $sourceHasMore) {
+            $resp = $this->api->callJson(JmConfig::ENDPOINT_PROMOTE_LIST, [
+                'id' => (string) $sectionId,
+                'page' => (string) $sourcePage,
+            ]);
+            $payload = is_array($resp['data']) ? $resp['data'] : [];
+            $items = isset($payload['list']) && is_array($payload['list']) ? $payload['list'] : [];
+            $total = self::intFromPayload($payload['total'] ?? $total);
+            $count = count($items);
+            $loadedCount = $sourcePage * self::PROMOTE_SOURCE_PAGE_SIZE + $count;
+            $sourceHasMore = $count >= self::PROMOTE_SOURCE_PAGE_SIZE && ($total === 0 || $loadedCount < $total);
+            foreach ($items as $item) {
+                $buffer[] = $item;
+            }
+            $sourcePage = $sourcePage + 1;
+        }
+
+        $window['source_has_more'] = $sourceHasMore;
+        return $this->windowedListResultFromItems('promote', $page, $buffer, $total, $window);
+    }
+
+    public function fetchWeeklyList(int $page, ?string $categoryId = null, ?string $typeId = null): JmListResult
+    {
+        if ($categoryId === null || $typeId === null) {
+            $defaults = $this->fetchWeekDefaults();
+            $categoryId ??= $defaults['category_id'];
+            $typeId ??= $defaults['type_id'];
+        }
+
+        $resp = $this->api->callJson(JmConfig::ENDPOINT_WEEK_FILTER, [
+            'page' => (string) $page,
+            'id' => $categoryId,
+            'type' => $typeId,
+        ]);
+        $payload = is_array($resp['data']) ? $resp['data'] : [];
+        $items = isset($payload['list']) && is_array($payload['list']) ? $payload['list'] : [];
+        $total = self::intFromPayload($payload['total'] ?? count($items));
+        return $this->listResultFromItems('weekly', $page, $items, $total);
+    }
+
+    private function fetchPromoteHomeList(int $page): JmListResult
+    {
+        $resp = $this->api->callJson(JmConfig::ENDPOINT_PROMOTE, []);
+        $sections = is_array($resp['data']) ? $resp['data'] : [];
+        $items = [];
+        $seenIds = [];
+
+        foreach ($sections as $section) {
+            if (!is_array($section)) continue;
+            if (self::isUnsupportedHomeSection(PayloadNormalizer::scalarString($section['title'] ?? ''))) continue;
+            $content = $section['content'] ?? [];
+            if (!is_array($content)) continue;
+            foreach ($content as $item) {
+                if (is_array($item)) {
+                    $itemId = PayloadNormalizer::scalarString($item['id'] ?? $item['aid'] ?? $item['AID'] ?? '');
+                    if ($itemId !== '' && isset($seenIds[$itemId])) continue;
+                    if ($itemId !== '') $seenIds[$itemId] = true;
+                    $items[] = $item;
+                }
+            }
+        }
+
+        $window = [
+            'source_page' => 0,
+            'offset' => (max(1, $page) - 1) * self::LOCAL_LIST_PAGE_SIZE,
+            'source_page_size' => max(1, count($items)),
+            'source_has_more' => false,
+        ];
+
+        return $this->windowedListResultFromItems('promote', $page, $items, count($items), $window);
+    }
+
+    private static function isUnsupportedHomeSection(string $title): bool
+    {
+        return in_array(trim($title), self::UNSUPPORTED_HOME_SECTION_TITLES, true);
+    }
+
+    /** @return array{category_id:string, type_id:string} */
+    private function fetchWeekDefaults(): array
+    {
+        $resp = $this->api->callJson(JmConfig::ENDPOINT_WEEK, []);
+        $payload = is_array($resp['data']) ? $resp['data'] : [];
+        $categories = isset($payload['categories']) && is_array($payload['categories']) ? $payload['categories'] : [];
+        $types = isset($payload['type']) && is_array($payload['type']) ? $payload['type'] : [];
+
+        $categoryId = '';
+        foreach ($categories as $category) {
+            $candidateId = is_array($category) ? trim(PayloadNormalizer::scalarString($category['id'] ?? '')) : '';
+            if ($candidateId !== '') {
+                $categoryId = $candidateId;
+                break;
+            }
+        }
+
+        $typeId = '';
+        foreach ($types as $type) {
+            $candidateId = is_array($type) ? trim(PayloadNormalizer::scalarString($type['id'] ?? '')) : '';
+            if ($candidateId !== '') {
+                $typeId = $candidateId;
+                break;
+            }
+        }
+
+        if ($categoryId === '' || $typeId === '') {
+            throw new JmException('Weekly defaults unavailable', 502);
+        }
+
+        return ['category_id' => $categoryId, 'type_id' => $typeId];
+    }
+
     public function searchAlbums(string $query, int $page, string $order = 'mr'): JmListResult
     {
         $resp = $this->api->callJson(JmConfig::ENDPOINT_SEARCH, [
@@ -1241,12 +1732,13 @@ final class JmService
         $items = isset($payload['content']) && is_array($payload['content']) ? $payload['content'] : [];
         $total = self::intFromPayload($payload['total'] ?? count($items));
 
-        if (empty($items) && !empty($payload['redirect_aid'])) {
-            $items[] = ['id' => (string) $payload['redirect_aid'], 'name' => 'JM ' . $payload['redirect_aid']];
+        $redirectAid = PayloadNormalizer::scalarString($payload['redirect_aid'] ?? '');
+        if (empty($items) && $redirectAid !== '') {
+            $items[] = ['id' => $redirectAid, 'name' => 'JM ' . $redirectAid];
             $total = max($total, 1);
         }
 
-        return $this->listResultFromItems('search', $page, $items, $total);
+        return $this->searchListResultFromItems($page, $items, $total);
     }
 
     public function fetchScrambleId(string $photoId): string
@@ -1271,7 +1763,7 @@ final class JmService
         }
 
         $resp = $this->api->callJson(JmConfig::ENDPOINT_CHAPTER, ['id' => $photoId]);
-        $chapter = JmChapter::fromApiResponse($resp['data'], $scrambleId);
+        $chapter = JmChapter::fromApiResponse($resp['data'], $scrambleId, $photoId);
         $this->cache->set($cacheKey, $chapter, self::envInt('JM_CHAPTER_CACHE_TTL', JmConfig::DEFAULT_CHAPTER_CACHE_TTL, 0, 86400));
         return $chapter;
     }
@@ -1442,6 +1934,10 @@ final class JmService
                 'page_cache_min_free_ratio' => self::envInt('JM_PAGE_CACHE_MIN_FREE_RATIO', JmConfig::DEFAULT_PAGE_CACHE_MIN_FREE_RATIO, 0, 100),
                 'prefetch_min_free_bytes' => self::envInt('JM_PREFETCH_MIN_FREE_BYTES', JmConfig::DEFAULT_PREFETCH_MIN_FREE_BYTES, 0, 512 * 1024 * 1024),
                 'prefetch_min_free_ratio' => self::envInt('JM_PREFETCH_MIN_FREE_RATIO', JmConfig::DEFAULT_PREFETCH_MIN_FREE_RATIO, 0, 100),
+            ],
+            'upstream' => [
+                'scramble_fallback_count' => (int) ($cache->get('diagnostics:scramble-fallback-count') ?? 0),
+                'last_scramble_fallback' => $cache->get('diagnostics:last-scramble-fallback'),
             ],
         ];
     }
@@ -1694,18 +2190,37 @@ final class JmService
 
     private function listResultFromItems(string $mode, int $page, array $items, int $total): JmListResult
     {
+        $sourceItemCount = self::payloadItemCount($items);
         $mapped = [];
         foreach ($items as $item) {
             if (is_array($item)) {
-                $mapped[] = JmListItem::fromPayload($item);
+                $mappedItem = self::listItemFromPayload($item);
+                if ($mappedItem !== null) $mapped[] = $mappedItem;
             }
         }
 
-        $pageSize = max(1, count($mapped));
-        $loaded = ($page - 1) * $pageSize + count($mapped);
-        $hasNextPage = $total > 0 ? $loaded < $total : count($mapped) > 0;
+        $loaded = ($page - 1) * self::LOCAL_LIST_PAGE_SIZE + $sourceItemCount;
+        $hasNextPage = $total > 0 ? $loaded < $total : $sourceItemCount > 0;
 
         return new JmListResult($mode, $page, $total, $hasNextPage, $mapped);
+    }
+
+    private function searchListResultFromItems(int $page, array $items, int $total): JmListResult
+    {
+        $sourceItemCount = self::payloadItemCount($items);
+        $mapped = [];
+        foreach ($items as $item) {
+            if (is_array($item)) {
+                $mappedItem = self::listItemFromPayload($item);
+                if ($mappedItem !== null) $mapped[] = $mappedItem;
+            }
+        }
+
+        $loaded = ($page - 1) * self::SOURCE_LIST_PAGE_SIZE + $sourceItemCount;
+        $hasNextPage = ($sourceItemCount >= self::SOURCE_LIST_PAGE_SIZE || count($mapped) >= self::SOURCE_LIST_PAGE_SIZE)
+            && ($total <= 0 || $loaded < $total);
+
+        return new JmListResult('search', $page, $total, $hasNextPage, $mapped);
     }
 
     /** @return array{source_page:int, offset:int} */
@@ -1715,25 +2230,59 @@ final class JmService
         return [
             'source_page' => intdiv($start, self::SOURCE_LIST_PAGE_SIZE),
             'offset' => $start % self::SOURCE_LIST_PAGE_SIZE,
+            'source_page_size' => self::SOURCE_LIST_PAGE_SIZE,
         ];
     }
 
-    /** @param array{source_page:int, offset:int} $window */
+    /** @return array{source_page:int, offset:int, source_page_size:int} */
+    private static function promoteListWindow(int $page): array
+    {
+        $start = (max(1, $page) - 1) * self::LOCAL_LIST_PAGE_SIZE;
+        return [
+            'source_page' => intdiv($start, self::PROMOTE_SOURCE_PAGE_SIZE),
+            'offset' => $start % self::PROMOTE_SOURCE_PAGE_SIZE,
+            'source_page_size' => self::PROMOTE_SOURCE_PAGE_SIZE,
+        ];
+    }
+
+    /** @param array{source_page:int, offset:int, source_page_size?:int, source_has_more?:bool} $window */
     private function windowedListResultFromItems(string $mode, int $page, array $items, int $total, array $window): JmListResult
     {
+        $sourcePageSize = max(1, (int) ($window['source_page_size'] ?? self::SOURCE_LIST_PAGE_SIZE));
+        $sourceItemCount = self::payloadItemCount($items);
         $mapped = [];
         foreach ($items as $item) {
             if (is_array($item)) {
-                $mapped[] = JmListItem::fromPayload($item);
+                $mappedItem = self::listItemFromPayload($item);
+                if ($mappedItem !== null) $mapped[] = $mappedItem;
             }
         }
 
         $sliced = array_slice($mapped, $window['offset'], self::LOCAL_LIST_PAGE_SIZE);
         $hasNextPage = $total > 0
             ? ($page * self::LOCAL_LIST_PAGE_SIZE) < $total
-            : count($mapped) > $window['offset'] + self::LOCAL_LIST_PAGE_SIZE || count($mapped) >= self::SOURCE_LIST_PAGE_SIZE;
+            : (
+                count($mapped) > $window['offset'] + self::LOCAL_LIST_PAGE_SIZE
+                || (array_key_exists('source_has_more', $window) ? (bool) $window['source_has_more'] : $sourceItemCount >= $sourcePageSize)
+            );
 
         return new JmListResult($mode, $page, $total, $hasNextPage, $sliced);
+    }
+
+    private static function listItemFromPayload(array $item): ?JmListItem
+    {
+        $mappedItem = JmListItem::fromPayload($item);
+        if ($mappedItem->id === '') return null;
+        return $mappedItem;
+    }
+
+    private static function payloadItemCount(array $items): int
+    {
+        $count = 0;
+        foreach ($items as $item) {
+            if (is_array($item)) $count++;
+        }
+        return $count;
     }
 
     private static function intFromPayload(mixed $value): int
@@ -1847,7 +2396,7 @@ final class SecurityManager
 
         // Count distinct jmids accessed by this IP in 10 minutes
         $key = "jmids:{$this->clientIp}";
-        $count = $this->store->incr($key, 600);
+        $count = $this->store->addToExpiringSetAndCount($key, $jmid, 600);
 
         if ($count > 100) {
             $this->store->ban($this->clientIp, 600);
@@ -2100,8 +2649,30 @@ function normalizeListMode(mixed $value): string
     return match ($mode) {
         '', 'popular', 'hot', 'rank', 'ranking' => 'popular',
         'latest', 'new', 'updates' => 'latest',
+        'promote', 'promotelist', 'recommend' => 'promote',
+        'weekly', 'week' => 'weekly',
         default => throw new SecurityException('无效的列表模式', 400),
     };
+}
+
+function normalizePromoteSectionId(mixed $value): int
+{
+    $raw = is_scalar($value) ? trim((string) $value) : '';
+    if ($raw === '') return 0;
+    if (!preg_match('/^\d{1,10}$/', $raw)) {
+        throw new SecurityException('无效的推荐分区', 400);
+    }
+    return (int) $raw;
+}
+
+function normalizeOptionalWeeklyId(mixed $value): ?string
+{
+    $raw = is_scalar($value) ? trim((string) $value) : '';
+    if ($raw === '') return null;
+    if (!preg_match('/^\d{1,20}$/', $raw)) {
+        throw new SecurityException('无效的每周推荐筛选参数', 400);
+    }
+    return $raw;
 }
 
 function normalizeSearchQuery(mixed $value): string
@@ -2135,8 +2706,24 @@ function normalizeNextChapterHint(mixed $value): ?string
     return preg_match('/^\d{1,20}$/', $raw) === 1 ? $raw : null;
 }
 
+function apiDomainDiagnostics(MemoryCache $cache): array
+{
+    $source = 'fallback';
+    $domains = JmConfig::API_DOMAINS;
+    $cachedDomains = JmApiClient::normalizeApiDomains($cache->get('api-domains'));
+    if (!empty($cachedDomains)) {
+        $domains = $cachedDomains;
+        $source = 'cache';
+    }
+
+    $diagnostics = DomainHealth::diagnostics($domains);
+    $diagnostics['source'] = $source;
+    return $diagnostics;
+}
+
 function isDirectNumericChapterImageRequest(mixed $chapterParam, mixed $pageParam): bool
 {
+    // numeric direct image requests validate chapter id format and page bounds, not album membership
     if (!is_scalar($chapterParam) || !is_scalar($pageParam)) return false;
     $chapter = trim((string) $chapterParam);
     $page = trim((string) $pageParam);
@@ -2182,13 +2769,27 @@ function sendJson(array $data, bool $minify): void
     exit;
 }
 
+/** @return array<string,mixed> */
+function safeErrorExtras(int $code, array $extra): array
+{
+    if ($code >= 500) {
+        return array_intersect_key($extra, array_flip(['retry_after', 'request_id']));
+    }
+    return $extra;
+}
+
 /** @return never */
 function sendError(int $code, string $msg, array $extra = []): void
 {
     // Don't leak internal details in production
     $safeMsg = ($code >= 500) ? '服务器内部错误' : $msg;
     $payload = ['code' => $code, 'success' => false, 'error' => $safeMsg];
-    if ($extra) $payload = array_merge($payload, $extra);
+    if ($extra) {
+        if ($code >= 500) {
+            $extra = safeErrorExtras($code, $extra);
+        }
+        $payload = array_merge($payload, $extra);
+    }
     sendJson($payload, false);
 }
 
@@ -2236,7 +2837,8 @@ if (($_GET['health'] ?? '') === '1') {
         'singleflight' => $runtimeDiagnostics['singleflight'],
         'prefetch'     => $runtimeDiagnostics['prefetch'],
         'cache_policy' => $runtimeDiagnostics['cache_policy'],
-        'domains'      => DomainHealth::diagnostics(JmConfig::API_DOMAINS),
+        'upstream'     => $runtimeDiagnostics['upstream'],
+        'domains'      => apiDomainDiagnostics($memoryCache),
         'redis'        => (new RedisStore())->isAvailable(),
         'memory'       => memory_get_usage(true),
     ];
@@ -2270,9 +2872,16 @@ if ($listParam !== null || $searchParam !== null) {
             $result = $service->searchAlbums($query, $page, $order);
         } else {
             $mode = normalizeListMode($listParam);
-            $result = $mode === 'latest'
-                ? $service->fetchLatestList($page)
-                : $service->fetchPopularList($page);
+            $result = match ($mode) {
+                'latest' => $service->fetchLatestList($page),
+                'promote' => $service->fetchPromoteList($page, normalizePromoteSectionId($_GET['section'] ?? $_GET['id'] ?? '0')),
+                'weekly' => $service->fetchWeeklyList(
+                    $page,
+                    normalizeOptionalWeeklyId($_GET['category_id'] ?? $_GET['category'] ?? null),
+                    normalizeOptionalWeeklyId($_GET['type_id'] ?? $_GET['type'] ?? null),
+                ),
+                default => $service->fetchPopularList($page),
+            };
         }
 
         $data = $result->toArray();

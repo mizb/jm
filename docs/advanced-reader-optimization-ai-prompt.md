@@ -1,6 +1,6 @@
 # Advanced Reader Optimization AI Prompt
 
-This prompt was used for the 2026-07-07 advanced reader optimization implementation. The current implemented API version after that round is `2026.07.07.3`. Reuse it only for audit, regression repair, or follow-up maintenance, and first compare it against the current code so you do not re-implement completed work.
+This prompt was used for the 2026-07-07 advanced reader optimization implementation. A later homepage/weekly-list follow-up brought the current implemented API version to `2026.07.07.7`. Reuse it only for audit, regression repair, or follow-up maintenance, and first compare it against the current code so you do not re-implement completed work.
 
 ```text
 You are an autonomous senior coding agent working on the user's Windows machine. Your job is to fully implement, test, document, and prepare deployment for the advanced JM API reader optimizations. Do not stop at analysis or a plan. Continue until complete delivery, unless a required external tool is missing.
@@ -53,7 +53,7 @@ Hard constraints:
 - Do not claim completion without fresh test or runtime evidence.
 
 Current baseline to preserve:
-- Historical baseline before this completed round was 2026.07.07.2; current implemented API version is 2026.07.07.3.
+- Historical baseline before the advanced reader round was 2026.07.07.2; current implemented API version is 2026.07.07.7.
 - Docker startup log prints JM API version.
 - health=1 returns top-level version and diagnostics.app_version.
 - All responses include X-JM-API-Version.
@@ -68,7 +68,7 @@ Current baseline to preserve:
 Implementation requirements:
 
 1. Version discipline
-- Because behavior will change, bump API version to 2026.07.07.3 in:
+- Because behavior will change, bump API version beyond the current 2026.07.07.7 in:
   - JmConfig::APP_VERSION
   - Dockerfile JM_API_VERSION
   - docker-compose.yml JM_API_VERSION
@@ -164,7 +164,7 @@ Implementation requirements:
 
 9. README and docs
 - Update README with:
-  - New API version 2026.07.07.3.
+  - New API version beyond 2026.07.07.7.
   - Single-flight behavior.
   - APCu waterline behavior.
   - Tiered prefetch and next-chapter preheat.
@@ -190,8 +190,8 @@ curl -I "http://localhost:8088/?jmid=350234&chapter=350234&page=1"
 curl -I "http://localhost:8088/?jmid=350234&chapter=350234&page=1"
 
 Expected runtime evidence:
-- Startup logs show JM API version 2026.07.07.3.
-- health=1 shows version 2026.07.07.3 and APCu diagnostics.
+- Startup logs show the current JM API version.
+- health=1 shows the current version and APCu diagnostics.
 - First image can be MISS.
 - Second identical image is HIT.
 - Image responses include X-JM-Singleflight.

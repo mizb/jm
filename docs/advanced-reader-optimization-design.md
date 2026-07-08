@@ -30,7 +30,7 @@ The practical outcomes should be:
 
 The current API now has:
 
-- API app version `2026.07.07.3`.
+- API app version `2026.07.07.7`.
 - Docker entrypoint that prints `JM API version ...`.
 - Port `8088`.
 - APCu page cache and APCu diagnostics in `health=1`.
@@ -81,6 +81,8 @@ Recommended internal units:
 Keep the public endpoint shapes stable:
 
 - `GET /?health=1`
+- `GET /?list=promote&page=1&format=min`
+- `GET /?list=weekly&page=1&format=min`
 - `GET /?list=latest&page=1&format=min`
 - `GET /?list=popular&page=1&format=min`
 - `GET /?search=<title>&page=1&order=mr&format=min`
@@ -447,7 +449,7 @@ Every implementation round that changes API behavior must bump all of these toge
 
 Implemented API version for this design:
 
-- `2026.07.07.3`
+- `2026.07.07.7`
 
 Keep:
 
@@ -550,7 +552,7 @@ This cannot prove perfect single-flight deterministically, but the logs and head
 ## Implementation Order
 
 1. Add failing static tests for version bump and new snippets.
-2. Bump API version to `2026.07.07.3` if behavior code changes.
+2. Bump API version beyond `2026.07.07.7` if behavior code changes.
 3. Extend `MemoryCache` with atomic add/delete/token-safe lock helpers and APCu free-ratio helpers.
 4. Add reader manifest cache and route `fetchDecodedPage()` through it.
 5. Add single-flight materialization around page MISS work.

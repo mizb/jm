@@ -107,6 +107,10 @@ $pageRangeMessage = (-join @([char]0x9875, [char]0x7801)) + ' {$page} ' + (-join
 $mojibakePagePrefix = -join @([char]0x6924, [char]0x7535, [char]0x721C)
 Assert-Contains $pageRangeMessage
 Assert-NotContains $mojibakePagePrefix
+$domainUnavailableMessage = (-join @([char]0x0041, [char]0x0050, [char]0x0049, [char]0x0020, [char]0x57DF, [char]0x540D, [char]0x5168, [char]0x90E8, [char]0x4E0D, [char]0x53EF, [char]0x7528))
+$mojibakeDomainPrefix = -join @([char]0x934C, [char]0x9369)
+Assert-Contains $domainUnavailableMessage
+Assert-NotContains $mojibakeDomainPrefix
 
 Assert-Matches 'if\s*\(isDirectNumericChapterImageRequest\(\$chapterParam,\s*\$pageParam\)\)\s*\{[\s\S]*?\$service->fetchDecodedPage\(\$chapterId,\s*\$page\)[\s\S]*?sendBinaryImage\(' 'numeric chapter + page direct image path before album fetch'
 Assert-Matches 'try\s*\{[\s\S]*?\$album\s*=\s*\$service->fetchAlbum\(\$jmid\);' 'album fetch remains only after direct image branch'

@@ -40,8 +40,11 @@ $runtimeVerify = Read-ProjectFile 'scripts/runtime-verify.ps1'
 $entrypoint = Read-ProjectFile 'docker-entrypoint.sh'
 $source = Read-ProjectFile 'index.php'
 $workflow = Read-ProjectFile '.github\workflows\docker-build.yml'
+$advancedDesign = Read-ProjectFile 'docs\advanced-reader-optimization-design.md'
+$advancedPrompt = Read-ProjectFile 'docs\advanced-reader-optimization-ai-prompt.md'
+$apiPrompt = Read-ProjectFile 'docs\ai-delivery-prompt.md'
 
-$expectedApiVersion = '2026.07.07.3'
+$expectedApiVersion = '2026.07.07.7'
 
 Assert-Contains $dockerfile 'pecl\s+install\s+apcu' 'APCu installation'
 Assert-Contains $dockerfile 'docker-php-ext-enable\s+apcu' 'APCu enablement'
@@ -110,6 +113,12 @@ Assert-Contains $readme 'JM_DOMAIN_COOLDOWN_SECONDS' 'README documents domain he
 $redisCacheAcceleration = -join @([char]0x7F13, [char]0x5B58, [char]0x52A0, [char]0x901F)
 Assert-NotContains $readme $redisCacheAcceleration 'README must not describe Redis as cache acceleration'
 
+Assert-Contains $advancedDesign $expectedApiVersion 'advanced API design documents current API version'
+Assert-Contains $advancedDesign 'list=promote' 'advanced API design documents promote list mode'
+Assert-Contains $advancedDesign 'list=weekly' 'advanced API design documents weekly list mode'
+Assert-Contains $advancedPrompt $expectedApiVersion 'advanced AI prompt documents current API version'
+Assert-Contains $apiPrompt $expectedApiVersion 'AI delivery prompt documents current API version'
+
 Assert-Contains $runtimeVerify '& docker compose @Arguments' 'runtime verifier invokes docker compose through a checked wrapper'
 Assert-Contains $runtimeVerify 'Invoke-DockerCompose -Arguments @\(''build''\)' 'runtime verifier builds compose image'
 Assert-Contains $runtimeVerify 'Invoke-DockerCompose -Arguments @\(''up'', ''-d'', ''--force-recreate''\)' 'runtime verifier recreates service for cold cache'
@@ -123,6 +132,8 @@ Assert-Contains $runtimeVerify 'top-level version' 'runtime verifier checks heal
 Assert-Contains $runtimeVerify 'diagnostics.app_version' 'runtime verifier checks app version diagnostics'
 Assert-Contains $runtimeVerify 'apcu_details' 'runtime verifier checks APCu diagnostics'
 Assert-Contains $runtimeVerify '\?list=latest&page=1&format=min' 'runtime verifier checks latest list starts at page 1'
+Assert-Contains $runtimeVerify '\?list=promote&page=1&format=min' 'runtime verifier checks original homepage recommendations'
+Assert-Contains $runtimeVerify '\?list=weekly&page=1&format=min' 'runtime verifier checks original weekly picks'
 Assert-Contains $runtimeVerify '\?jmid=\$AlbumId&format=min' 'runtime verifier checks album metadata endpoint'
 Assert-Contains $runtimeVerify 'X-JM-Cache' 'runtime verifier checks image cache header'
 Assert-Contains $runtimeVerify 'X-JM-Image-Codec' 'runtime verifier checks image codec header'

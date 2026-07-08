@@ -1,4 +1,4 @@
-﻿# JM Comic Viewer API
+# JM Comic Viewer API
 
 PHP 8 禁漫 API 客户端 — 专辑/章节详情 + 图片 URL + 乱序解密参数。
 
@@ -26,7 +26,7 @@ docker compose up -d --build
 
 ```text
 ghcr.io/<你的GitHub用户名>/<仓库名>:latest
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.3
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.7
 ```
 
 如果要直接使用 GHCR 镜像，可以把 `docker-compose.yml` 中的 `build` 删除，并把 `image` 改成你的镜像名：
@@ -39,7 +39,7 @@ services:
     ports:
       - "8088:8088"
     environment:
-      JM_API_VERSION: "2026.07.07.3"
+      JM_API_VERSION: "2026.07.07.7"
       JM_PREFETCH_PAGES: "10"
       JM_PREFETCH_HIGH_PRIORITY_PAGES: "2"
       JM_PREFETCH_MIN_FREE_BYTES: "33554432"
@@ -82,7 +82,7 @@ docker image inspect ghcr.io/<你的GitHub用户名>/<仓库名>:latest --format
 如果想完全避免 `latest` 缓存误判，可以把 compose 里的镜像固定为：
 
 ```text
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.3
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.7
 ```
 
 启动后检查服务：
@@ -90,6 +90,8 @@ ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.3
 ```bash
 curl "http://localhost:8088/?health=1"
 curl "http://localhost:8088/?jmid=350234&format=min"
+curl "http://localhost:8088/?list=promote&page=1&format=min"
+curl "http://localhost:8088/?list=weekly&page=1&format=min"
 curl "http://localhost:8088/?list=latest&page=1&format=min"
 curl "http://localhost:8088/?search=董卓&page=1&format=min"
 ```
@@ -103,7 +105,7 @@ docker logs jmcomic-api
 看到类似下面这行，就能判断容器加载的是哪一版：
 
 ```text
-JM API version 2026.07.07.3
+JM API version 2026.07.07.7
 ```
 
 `health=1` 会返回顶层 `version` 和 `diagnostics.app_version`。所有响应也会带 `X-JM-API-Version` 头，所以直接 `php -S` 和 Docker 启动都能通过接口确认当前运行版本。
@@ -153,6 +155,12 @@ curl "http://localhost:8088/?list=latest&page=1"
 # 热门列表
 curl "http://localhost:8088/?list=popular&page=1"
 
+# 原版首页推荐
+curl "http://localhost:8088/?list=promote&page=1"
+
+# 原版每周推荐/每周必看
+curl "http://localhost:8088/?list=weekly&category_id=1&type_id=1&page=1"
+
 # 搜索书名
 curl "http://localhost:8088/?search=董卓&page=1"
 ```
@@ -179,7 +187,12 @@ curl "http://localhost:8088/?search=董卓&page=1"
 |------|------|------|
 | `list` | `popular` | 热门列表 |
 | `list` | `latest` | 最新更新 |
+| `list` | `promote` | 原版首页推荐；可选 `section`/`id` |
+| `list` | `weekly` | 原版每周必看/每周推荐；可选 `category_id` 和 `type_id` |
 | `page` | `1` | 1-based 分页 |
+| `section` | `0` | 推荐分区 ID，默认 `0` |
+| `category_id` | `1` | 每周推荐分类 ID；不传则自动读取原版默认分类 |
+| `type_id` | `1` | 每周推荐类型 ID；不传则自动读取原版默认类型 |
 
 ```
 GET /?list=latest&page=1
@@ -334,9 +347,9 @@ GET /?jmid=350234&chapter=413446
 {
   "code": 200,
   "success": true,
-  "version": "2026.07.07.3",
+  "version": "2026.07.07.7",
   "diagnostics": {
-    "app_version": "2026.07.07.3",
+    "app_version": "2026.07.07.7",
     "php": "8.5.7",
     "apcu": true,
     "apcu_details": {
@@ -377,7 +390,7 @@ JM CDN 上的图片经过**行乱序加密**。直接打开 URL 显示花图。
 GET /?jmid=350234&chapter=413446&page=1
 ```
 
-When `chapter` is a numeric photo ID and `page` is present, the API takes a direct image path and skips the album metadata request. `chapter=@N`, `chapter=all`, and comma-separated chapter lists still use album validation.
+When `chapter` is a numeric photo ID and `page` is present, the API takes a direct image path and skips the album metadata request. Numeric direct image requests validate chapter id format and page bounds, not album membership. `chapter=@N`, `chapter=all`, and comma-separated chapter lists still use album validation.
 
 Decoded scrambled still images prefer WebP quality 85 when GD supports WebP, and fall back to JPEG quality 85. GIF and non-scrambled images are returned without re-encoding. The image endpoint returns `X-JM-Cache: HIT/MISS` and `X-JM-Image-Codec: webp/jpeg/gif/png/original`.
 
@@ -389,7 +402,7 @@ When a chapter response is generated with album context, image URLs include a `n
 
 Upstream API domains are scored in APCu with success/failure counts, failure streak, short cooldown, and EWMA latency. `JM_DOMAIN_COOLDOWN_SECONDS` controls the base cooldown. If every domain is cooling down, the API falls back to the original domain order and still tries the request.
 
-接口会先校验 `chapter` 是否属于指定 `jmid`，再从章节图片列表中按 1-based `page` 取图、下载原图、按 `decode_segments` 解乱序并输出图片。该接口不会接受任意外部图片 URL，因此不会作为开放代理使用。
+`chapter=@N`、`chapter=all` 和逗号分隔章节列表会先校验章节属于指定 `jmid`。数字 `chapter` + `page` 快路径为了减少 album 元数据请求，只校验章节 ID 格式和页码范围，不校验 album membership。图片接口不会接受任意外部图片 URL，因此不会作为开放代理使用。
 
 ### PHP 解密
 
@@ -436,7 +449,7 @@ Redis 不可用时优雅降级 — 不限流。
 
 ### 输入校验
 
-- jmid：严格数字匹配，长度 ≤ 200
+- jmid：严格数字匹配，长度 ≤ 20
 - chapter：白名单（仅允许 album 中已存在的 photo_id）
 - 批量上限：单次最多 50 章
 - cURL：强制 HTTPS，禁止 `file://` 协议
@@ -450,7 +463,7 @@ Redis 不可用时优雅降级 — 不限流。
 ```
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
-X-JM-API-Version: 2026.07.07.3
+X-JM-API-Version: 2026.07.07.7
 X-JM-Cache: HIT|MISS
 X-JM-Image-Codec: webp|jpeg|gif|png|original
 X-JM-Singleflight: hit|owner|hit-after-wait|timeout|disabled
@@ -544,6 +557,15 @@ echo "extension=redis.so" >> /etc/php/8.5/cli/conf.d/redis.ini
 redis-cli -h 127.0.0.1 -p 6379 PING
 ```
 
+默认连接 `127.0.0.1:6379`。Docker sidecar 或远程 Redis 可通过环境变量配置，Redis 仍然是可选依赖：
+
+```yaml
+environment:
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  REDIS_TIMEOUT_MS: "500"
+```
+
 ## 错误码
 
 | HTTP | 含义 |
@@ -552,7 +574,7 @@ redis-cli -h 127.0.0.1 -p 6379 PING
 | 400 | 参数错误（无效 jmid / chapter） |
 | 429 | 请求过频 / 异常访问 |
 | 500 | 服务器内部错误 |
-| 502 | 上游 API 全部不可用 |
+| 502 | 上游 API 不可用 / 响应异常 |
 
 ## 许可
 
