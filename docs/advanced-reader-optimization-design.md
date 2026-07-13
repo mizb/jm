@@ -31,6 +31,7 @@ The practical outcomes should be:
 The current API now has:
 
 - API app version `2026.07.07.7`.
+- Current post-filter-fix maintenance version: `2026.07.13.1`.
 - Docker entrypoint that prints `JM API version ...`.
 - Port `8088`.
 - APCu page cache and APCu diagnostics in `health=1`.

@@ -7,7 +7,7 @@ services:
     ports:
       - "8088:8088"
     environment:
-      JM_API_VERSION: "2026.07.07.7"
+      JM_API_VERSION: "2026.07.13.1"
       JM_PREFETCH_PAGES: "10"
       JM_PREFETCH_HIGH_PRIORITY_PAGES: "2"
       JM_PREFETCH_MIN_FREE_BYTES: "33554432"

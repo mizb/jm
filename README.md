@@ -26,7 +26,7 @@ docker compose up -d --build
 
 ```text
 ghcr.io/<你的GitHub用户名>/<仓库名>:latest
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.7
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.13.1
 ```
 
 如果要直接使用 GHCR 镜像，可以把 `docker-compose.yml` 中的 `build` 删除，并把 `image` 改成你的镜像名：
@@ -39,7 +39,7 @@ services:
     ports:
       - "8088:8088"
     environment:
-      JM_API_VERSION: "2026.07.07.7"
+      JM_API_VERSION: "2026.07.13.1"
       JM_PREFETCH_PAGES: "10"
       JM_PREFETCH_HIGH_PRIORITY_PAGES: "2"
       JM_PREFETCH_MIN_FREE_BYTES: "33554432"
@@ -82,7 +82,7 @@ docker image inspect ghcr.io/<你的GitHub用户名>/<仓库名>:latest --format
 如果想完全避免 `latest` 缓存误判，可以把 compose 里的镜像固定为：
 
 ```text
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.7
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.13.1
 ```
 
 启动后检查服务：
@@ -105,7 +105,7 @@ docker logs jmcomic-api
 看到类似下面这行，就能判断容器加载的是哪一版：
 
 ```text
-JM API version 2026.07.07.7
+JM API version 2026.07.13.1
 ```
 
 `health=1` 会返回顶层 `version` 和 `diagnostics.app_version`。所有响应也会带 `X-JM-API-Version` 头，所以直接 `php -S` 和 Docker 启动都能通过接口确认当前运行版本。
@@ -190,6 +190,8 @@ curl "http://localhost:8088/?search=董卓&page=1"
 | `list` | `promote` | 原版首页推荐；可选 `section`/`id` |
 | `list` | `weekly` | 原版每周必看/每周推荐；可选 `category_id` 和 `type_id` |
 | `page` | `1` | 1-based 分页 |
+| `order` | `new` | 仅用于 `popular`：`new`、`mv` 或 `tf`；非法值回退为 `new` |
+| `o` | `mv` | `order` 的兼容别名；同时传入时 `order` 优先 |
 | `section` | `0` | 推荐分区 ID，默认 `0` |
 | `category_id` | `1` | 每周推荐分类 ID；不传则自动读取原版默认分类 |
 | `type_id` | `1` | 每周推荐类型 ID；不传则自动读取原版默认类型 |
@@ -197,6 +199,15 @@ curl "http://localhost:8088/?search=董卓&page=1"
 ```
 GET /?list=latest&page=1
 ```
+
+热门目录排序示例：
+
+```text
+GET /?list=popular&page=1&order=new|mv|tf&format=min
+GET /?list=popular&page=1&order=mv&format=min
+```
+
+目录排序与标题搜索排序是独立契约。目录只接受 `new`、`mv`、`tf`；标题搜索保留 `mr`、`mv`、`mp`、`tf`、`new`。
 
 响应：
 
@@ -234,7 +245,7 @@ GET /?list=latest&page=1
 GET /?search=董卓&page=1
 ```
 
-`order`/`o` 可选，默认 `mr`，可传 `mv`、`mp`、`tf`。
+`order`/`o` 可选，默认 `mr`，可传 `mr`、`mv`、`mp`、`tf`、`new`。
 
 ### GET /?jmid={id}
 
@@ -347,9 +358,9 @@ GET /?jmid=350234&chapter=413446
 {
   "code": 200,
   "success": true,
-  "version": "2026.07.07.7",
+  "version": "2026.07.13.1",
   "diagnostics": {
-    "app_version": "2026.07.07.7",
+    "app_version": "2026.07.13.1",
     "php": "8.5.7",
     "apcu": true,
     "apcu_details": {
@@ -463,7 +474,7 @@ Redis 不可用时优雅降级 — 不限流。
 ```
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
-X-JM-API-Version: 2026.07.07.7
+X-JM-API-Version: 2026.07.13.1
 X-JM-Cache: HIT|MISS
 X-JM-Image-Codec: webp|jpeg|gif|png|original
 X-JM-Singleflight: hit|owner|hit-after-wait|timeout|disabled

@@ -78,7 +78,7 @@ if ($latestBody -notmatch 'windowedListResultFromItems') {
     throw 'Latest list must slice upstream 80-item pages into original 20-item local pages'
 }
 
-$popularBody = [regex]::Match($source, 'public function fetchPopularList\(int \$page\): JmListResult\s*\{(?<body>[\s\S]*?)\n    \}\n\n    public function searchAlbums').Groups['body'].Value
+$popularBody = [regex]::Match($source, 'public function fetchPopularList\(int \$page, string \$order = ''new''\): JmListResult\s*\{(?<body>[\s\S]*?)\n    \}\n\n    public function fetchPromoteList').Groups['body'].Value
 if ([string]::IsNullOrWhiteSpace($popularBody)) {
     throw 'Could not isolate fetchPopularList body'
 }
@@ -88,8 +88,11 @@ if ($popularBody -notmatch 'sourceListWindow\(\$page\)') {
 if ($popularBody -notmatch '''page''\s*=>\s*\(string\)\s*\$window\[''source_page''\]') {
     throw 'Popular list must forward original 0-based source page to upstream category filter endpoint'
 }
-if ($popularBody -notmatch '''c''\s*=>\s*''latest''[\s\S]*?''o''\s*=>\s*''new''') {
-    throw 'Popular/category list must use original default category=latest and order=new'
+if ($popularBody -notmatch 'normalizeCatalogOrder\(\$order\)') {
+    throw 'Popular/category list must re-normalize internal order before upstream use'
+}
+if ($popularBody -notmatch '''c''\s*=>\s*''latest''[\s\S]*?''o''\s*=>\s*\$order') {
+    throw 'Popular/category list must use category=latest and forward normalized order'
 }
 if ($popularBody -notmatch 'windowedListResultFromItems') {
     throw 'Popular list must slice upstream 80-item pages into original 20-item local pages'
@@ -212,6 +215,10 @@ Assert-Matches '''promote''\s*=>\s*\$service->fetchPromoteList' 'list router exp
 Assert-Matches '''weekly''\s*=>\s*\$service->fetchWeeklyList' 'list router exposes original weekly mode'
 Assert-Matches '''recommend''\s*=>\s*''promote''' 'list mode normalizes recommend alias to promote'
 Assert-Matches '''week''\s*=>\s*''weekly''' 'list mode normalizes week alias to weekly'
+Assert-Matches 'function\s+normalizeCatalogOrder\(mixed\s+\$value\):\s*string' 'catalog order uses a separate normalizer'
+Assert-Matches 'in_array\(\$order,\s*\[''new'',\s*''mv'',\s*''tf''\],\s*true\)' 'catalog order whitelist is exactly new/mv/tf'
+Assert-Matches 'normalizeCatalogOrder\(\$_GET\[''order''\]\s*\?\?\s*\$_GET\[''o''\]\s*\?\?\s*''new''\)' 'popular order reads order before compatibility alias o'
+Assert-Matches 'normalizeSearchOrder[\s\S]*?\[''mr'',\s*''mv'',\s*''mp'',\s*''tf'',\s*''new''\]' 'search order compatibility remains unchanged'
 
 foreach ($snippet in @(
     'list=promote',

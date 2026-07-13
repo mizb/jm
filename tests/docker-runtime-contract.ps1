@@ -44,7 +44,7 @@ $advancedDesign = Read-ProjectFile 'docs\advanced-reader-optimization-design.md'
 $advancedPrompt = Read-ProjectFile 'docs\advanced-reader-optimization-ai-prompt.md'
 $apiPrompt = Read-ProjectFile 'docs\ai-delivery-prompt.md'
 
-$expectedApiVersion = '2026.07.07.7'
+$expectedApiVersion = '2026.07.13.1'
 
 Assert-Contains $dockerfile 'pecl\s+install\s+apcu' 'APCu installation'
 Assert-Contains $dockerfile 'docker-php-ext-enable\s+apcu' 'APCu enablement'

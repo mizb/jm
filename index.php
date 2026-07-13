@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.07.7';
+    public const APP_VERSION    = '2026.07.13.1';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -1585,13 +1585,14 @@ final class JmService
         return $this->windowedListResultFromItems('latest', $page, $payload, 0, $window);
     }
 
-    public function fetchPopularList(int $page): JmListResult
+    public function fetchPopularList(int $page, string $order = 'new'): JmListResult
     {
+        $order = normalizeCatalogOrder($order);
         $window = self::sourceListWindow($page);
         $resp = $this->api->callJson(JmConfig::ENDPOINT_CATEGORY_FILTER, [
             'page' => (string) $window['source_page'],
             'c'    => 'latest',
-            'o'    => 'new',
+            'o'    => $order,
         ]);
         $payload = is_array($resp['data']) ? $resp['data'] : [];
         $items = isset($payload['content']) && is_array($payload['content']) ? $payload['content'] : [];
@@ -2693,6 +2694,12 @@ function normalizeSearchOrder(mixed $value): string
     return in_array($order, ['mr', 'mv', 'mp', 'tf', 'new'], true) ? $order : 'mr';
 }
 
+function normalizeCatalogOrder(mixed $value): string
+{
+    $order = strtolower(trim(is_scalar($value) ? (string) $value : 'new'));
+    return in_array($order, ['new', 'mv', 'tf'], true) ? $order : 'new';
+}
+
 function isPrefetchEnabled(mixed $value): bool
 {
     $raw = strtolower(trim(is_scalar($value) ? (string) $value : '1'));
@@ -2880,7 +2887,10 @@ if ($listParam !== null || $searchParam !== null) {
                     normalizeOptionalWeeklyId($_GET['category_id'] ?? $_GET['category'] ?? null),
                     normalizeOptionalWeeklyId($_GET['type_id'] ?? $_GET['type'] ?? null),
                 ),
-                default => $service->fetchPopularList($page),
+                default => $service->fetchPopularList(
+                    $page,
+                    normalizeCatalogOrder($_GET['order'] ?? $_GET['o'] ?? 'new'),
+                ),
             };
         }
 
