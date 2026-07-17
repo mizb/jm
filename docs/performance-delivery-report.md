@@ -2,7 +2,7 @@
 
 日期：2026-07-17  
 范围：`D:\jm\jmcomic-api-main`、`D:\jm\jmapi-extension`  
-状态：**当前源码的本机可执行代码优化、针对性测试、v1.4.15 构建/元数据和真实 Suwayomi 回归已完成。尚未闭环的是 Docker 多 worker 验收、生产签名，以及当前 `index.php` 哈希对应的正式性能 A/B；现有透明 HTTPS A/B 是有明确哈希绑定的历史证据。**
+状态：**当前源码的本机可执行代码优化、针对性测试、v1.4.15 构建/元数据、真实 Suwayomi 回归，以及当前 `index.php` 哈希对应的正式同条件性能 A/B 已完成。尚未闭环的是需要容器运行时的 Docker 多 worker 验收；生产签名属于发布治理待办，不是本计划的代码完成门槛。**
 
 ## 1. 结论与边界
 
@@ -11,8 +11,9 @@
 - 筛选显示已固定为中文：`排序 / 最新 / 最多浏览 / 最多点赞`。
 - Popular 固定映射 `list=promote`，Latest 固定映射 `list=weekly`；空搜索、标题搜索和 JM ID/URL 搜索契约均已在 Suwayomi 实际请求中验证。
 - 请求预算、短 TTL 缓存、域名刷新隔离、预取资源预算、图片资源边界、Redis 限流、可信代理和扩展 URL/章节逻辑均已实现并通过本机测试。
-- 已从 Codex 原始补丁日志逆向恢复 pre-change 源码，并逐文件命中行为修改前记录的四个 SHA-256；获批的 loopback-only 透明 HTTPS harness 对恢复版和当时的 `2026.07.13.2 / index.php=680AF597…18FB7C` 完成了同条件成功路径 A/B。
-- 该历史 A/B 的主要结果是 fixture 上游请求 `397 → 7`（减少 `98.237%`），列表/专辑 p50 改善约 `21.550%～25.191%`；但 health 与图片 p50、图片 p95，以及 latest page 1/album 的部分 p99 有回退。当前 `index.php=53A15D40…A3B5C` 包含其后的正确性修复，不能把旧数据冒充为当前源码性能结果。
+- 已从 Codex 原始补丁日志逆向恢复 pre-change 源码，并逐文件命中行为修改前记录的四个 SHA-256；获批的 loopback-only 透明 HTTPS harness 已对恢复版 `A88271DC…7A13ED` 与当前 `2026.07.17.1 / index.php=53A15D40…A3B5C` 完成同条件成功路径 A/B。
+- 当前哈希 A/B 中，fixture 上游请求 `397 → 7`（减少 `98.237%`），latest page 1/page 4/album p50 分别改善 `23.738% / 28.243% / 37.268%`，5 条路由 p95/p99 均改善；health 和图片 p50 分别回退 `10.486% / 14.550%`。10 客户端图片队列 wall `275.700ms → 135.304ms`。这些结果只覆盖确定性 loopback、Windows PHP built-in 单 worker，不外推为 Docker 多 worker或真实公网绝对延迟。
+- 早先绑定 `2026.07.13.2 / index.php=680AF597…18FB7C` 的 A/B 继续作为独立历史证据保留；不得与当前哈希结果混用。
 - 两个目录都没有 `.git`。文件清单来自当前文件系统和实施计划，不是 Git diff；不伪造提交、提交哈希或版本历史。
 - 两个交付项目分别是 PHP 和 Kotlin/Android 项目，没有 `go.mod` 或 Go 源码。将其改写为 Go 会改变既定部署/API 架构，本轮未擅自迁移；“使用最新 Go”对当前两项目不适用。
 
@@ -89,6 +90,8 @@
 | `docs/superpowers/specs/2026-07-17-transparent-https-performance-harness-design.md` | `4E1755D3C2FB8FF0BBDE34077E6BB1F7B4377478AFC1F02A845454A334863D52` |
 | `docs/superpowers/plans/2026-07-17-transparent-https-performance-harness.md` | `5696EBAFEB40CF49E33DB787184F4BB9C8A1B8709ABC66B048E655381EEA998C` |
 | `performance-evidence/transparent-https-common-ab-20260717.json` | `47044F43CF37BF16E77F2B8C6DEA76A28FF0C74E348C6890FD80B0179CAB8B77` |
+| `performance-evidence/transparent-https-current-smoke-20260717.json` | `049CF4F97721D49BD2FE2A889F9805D92895B7BA1083A35C27C42A63F8C64C51` |
+| `performance-evidence/transparent-https-current-ab-20260717.json` | `6ECB423EFE3A2B66B196B1AEC9D15D96CA8F1DB0732ABD01181A24F5CDB2F9B5` |
 
 ### 3.2 扩展
 
@@ -129,9 +132,10 @@
 | APK/元数据 | v1.4.15 aapt2 manifest、v1/v2 签名、实际证书、3 个 JSON 回读、APK 名称/版本/哈希一致性全部通过 |
 | 真实 Suwayomi | 2.3.2243 + Java 21；v1.4.15 installed=true/hasUpdate=false，中文筛选/设置、5 条浏览搜索路径、详情、章节、12 页与 WebP 图片通过；预取 disabled `0→1`、重新启用后保持 `1` |
 | 透明 HTTPS 代理 runtime | PASS；listen/upstream 仅 loopback、真实 TLS/SAN/Host 转发、非白名单 403、加密 config、系统 CA 隔离和受控清理 |
-| 同条件 A/B smoke | PASS；warmup=1、iterations=2、concurrency=2；两份源码五路由、实时实例身份、四文件历史快照、loopback 覆盖和 cleanup 均通过 |
+| 当前哈希同条件 A/B smoke | PASS；`A88271DC…7A13ED → 53A15D40…A3B5C`，warmup=1、iterations=2、concurrency=2；五路由、实时实例身份、四文件历史快照、loopback 覆盖和 cleanup 均通过 |
 | 历史哈希绑定的正式成功路径 A/B | PASS；warmup=10、iterations=120、concurrency=10；BEFORE/AFTER 各 600 个 warm 样本全部 status 200 且业务合同通过，`comparable=true`；不代表当前 `index.php` |
-| 正式证据独立重算 | PASS；逐路由重算 p50/p95/p99、复核源码/四文件哈希、CA/进程/临时目录清理，报告 SHA-256 一致 |
+| 当前哈希正式成功路径 A/B | PASS；`A88271DC…7A13ED → 53A15D40…A3B5C`，warmup=10、iterations=120、concurrency=10；BEFORE/AFTER 各 600 个 warm 样本全部 status 200、`contract_valid=true`、`comparable=true` |
+| 当前正式证据独立重算 | PASS；逐路由从 120 个原始样本重算 p50/p95/p99，复核 397→7 fixture 次数、源码/四文件哈希、临时 CA 不在系统根、进程/环境/临时目录清理；报告 SHA-256 `6ECB423E…2F9B5` |
 
 静态 `docker-runtime-contract.ps1` 只证明 compose/runtime verifier 的文本合同，不能替代真实 Docker 运行；真实 Docker 状态见第 7 节。
 
@@ -148,13 +152,43 @@
 | Task 7 CDN/图片/Redis | chapter/manifest v2、相对路径、CDN failover、压缩字节/像素/容器/解码边界 71/71；真实 Redis 16 worker 原子限流通过 | 完成 |
 | Task 8 扩展修复 | 中文化、URL builder/basePath、ID/章节、页面 URL 权威来源和预取双向同步合同通过；v1.4.15 构建、元数据、签名和 Suwayomi 实际请求通过 | 完成 |
 | Task 9 版本与文档 | API 统一 `2026.07.17.1`；扩展 README/Gradle/APK/index 统一 v1.4.15/code 15 | 完成 |
-| Task 10 完整验证 | 静态/纯策略/本地 HTTP/Redis/YAML/Gradle/APK/Suwayomi/after-only/透明 HTTPS A/B/report 均有证据；pre-change 四文件恢复并通过哈希/语法验证 | 本机单 worker 成功路径 compare 已完成；Docker runtime/fault matrix 仍受外部环境阻塞 |
+| Task 10 完整验证 | 静态/纯策略/本地 HTTP/Redis/YAML/Gradle/APK/Suwayomi/after-only/当前哈希透明 HTTPS A/B/report 均有证据；pre-change 四文件恢复并通过哈希/语法验证 | 当前源码本机单 worker 成功路径 compare 已完成；Docker runtime/fault matrix 仍受外部环境阻塞 |
 
 Git 提交步骤属于所有 Task 的条件性步骤。两个目标目录从开始到当前都没有 `.git`，因此这些步骤按计划 Preflight 第 49 行记录为“不适用/不可执行”，不能用无来源提交代替。
 
 ## 5. 性能证据
 
-### 5.1 历史透明 HTTPS 同条件成功路径 A/B
+### 5.1 当前源码透明 HTTPS 同条件成功路径 A/B
+
+正式证据：`D:\jm\jmcomic-api-main\performance-evidence\transparent-https-current-ab-20260717.json`  
+SHA-256：`6ECB423EFE3A2B66B196B1AEC9D15D96CA8F1DB0732ABD01181A24F5CDB2F9B5`  
+模式：`historical-common-denominator-v1`（表示基线由权威快照恢复，不表示 AFTER 是历史旧版）  
+生成时间：`2026-07-17T06:31:20.5268788Z`
+
+证据严格绑定：
+
+- BEFORE：API `2026.07.13.1`，`index.php=A88271DCD759CDB4992FB2C49C963441FDA7028201E991211CD4DE4B497A13ED`。
+- AFTER：当前 API `2026.07.17.1`，`index.php=53A15D40E711A91B80C1334E11EE4D358A737BBB785F86FC5C25069C217A3B5C`。
+- PHP 8.3.32、APCu `134217640` bytes、Windows PHP built-in 单 worker、同一 fixture/透明代理实例、临时 CA、输入、端口分配策略和五条代表路由；外部条件指纹两侧均为 `5A474508…03C6D`。
+- warmup=10、iterations=120、concurrency=10；BEFORE/AFTER 各 `5 × 120 = 600` 个 warm 样本，全部 HTTP 200、`contract_valid=true`，五路由均满足 p95/p99 样本门槛。
+- config、API、章节与 CDN 请求全部命中 loopback fixture；`fixed_loopback_proven=true`、`comparable=true`。
+- 恢复快照、当前源码、编排器、代理、fixture、探针、PHP/扩展文件在测量前后哈希不变；临时 CA 未进入 CurrentUser/LocalMachine Root，子进程、父环境和临时目录全部清理。
+
+独立从原始样本按 nearest-rank 重算：
+
+| route | BEFORE p50 | AFTER p50 | p50 改善 | BEFORE p95 | AFTER p95 | p95 改善 | BEFORE p99 | AFTER p99 | p99 改善 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| health | 18.845ms | 20.821ms | -10.486% | 176.986ms | 55.207ms | 68.807% | 2256.718ms | 591.029ms | 73.810% |
+| latest page 1 | 30.230ms | 23.054ms | 23.738% | 184.564ms | 59.941ms | 67.523% | 1402.007ms | 237.114ms | 83.088% |
+| latest page 4 | 32.291ms | 23.171ms | 28.243% | 241.734ms | 77.750ms | 67.837% | 4102.005ms | 158.005ms | 96.148% |
+| album | 33.256ms | 20.862ms | 37.268% | 302.977ms | 80.580ms | 73.404% | 9343.818ms | 476.008ms | 94.906% |
+| image_no_prefetch | 18.776ms | 21.508ms | -14.550% | 148.279ms | 51.066ms | 65.561% | 437.636ms | 77.733ms | 82.238% |
+
+fixture 请求总数 `397 → 7`，减少 `390` 次／`98.237%`：BEFORE latest=262、album=131、chapter/scramble=2、media=2；当前 AFTER config=1、latest=1、album=1、chapter/scramble=2、media=2。10 客户端图片队列两侧均 10/10 成功，wall `275.700ms → 135.304ms`，改善 `50.923%`。
+
+解释边界：当前实现显著减少重复上游调用，列表/album p50 及全部五路由的 p95/p99 在本次运行中改善；但 health 与图片 p50 回退，不能宣称“所有延迟都改善”。BEFORE 的单 worker 长尾较大，结果需要在独立重复运行或 Docker 多 worker环境中再判断稳定性；本地确定性 fixture 不代表真实公网绝对延迟或 Docker 吞吐。原始修改时间点没有预先测量的事实仍保留，本节是使用权威恢复快照在后来批准的同条件 harness 中重跑，不冒充原始时间点采样。
+
+### 5.2 历史透明 HTTPS 同条件成功路径 A/B
 
 正式证据：`D:\jm\jmcomic-api-main\performance-evidence\transparent-https-common-ab-20260717.json`  
 SHA-256：`47044F43CF37BF16E77F2B8C6DEA76A28FF0C74E348C6890FD80B0179CAB8B77`  
@@ -187,7 +221,7 @@ fixture 请求总数从 `397` 降到 `7`，减少 `390` 次／`98.237%`：恢复
 
 解释边界：本结果可以支持“重复上游调用显著减少”和特定列表/专辑分位数改善；不能支持“所有延迟都改善”。health p50、图片 p50/p95、latest page 1 p99 和 album p99 存在回退或抖动，后续优化应先用重复独立运行确认稳定性。该本地 fixture 结果不外推为真实公网绝对延迟或 Docker 10-worker 吞吐。
 
-### 5.2 历史 after-only 性能证据
+### 5.3 历史 after-only 性能证据
 
 文件：`D:\jm\jmcomic-api-main\performance-after.local-fixture.json`  
 SHA-256：`1FA56EA0694A87979724CAB61637BE421724AE4444A713C3B6EB6EE532A165C7`  
@@ -230,7 +264,7 @@ warm 结果：
 
 `performance-before.unavailable.json` 的 SHA-256 为 `9106FADFD00B190B3546212579C14E5144966FB102247340A0230FC5B7A78D1D`。精确源码快照位于 `performance-evidence/before-source-20260713T061309Z`，其 `manifest.json` SHA-256 为 `55187656E7446B8D9A897F9FF2AC55ECDBCF66819F440B108CFB7D52CF5F0FFD`；恢复的 `index.php` SHA-256 为 `A88271DCD759CDB4992FB2C49C963441FDA7028201E991211CD4DE4B497A13ED`，并通过 PHP 8.3.32 lint。以上只说明原始时间点未测量和源码来源；不能给 after-only 文件补写百分比。可比较百分比仅来自上节单独标识、同条件重跑的 common-denominator 报告。
 
-### 5.3 历史同 PHP、同真实网络的冷失败路径夹测
+### 5.4 历史同 PHP、同真实网络的冷失败路径夹测
 
 原始证据：`performance-evidence/production-failure-cold-ab-20260717.json`，SHA-256 `D3E1906E1C9270141FA6ACD0F319D800BE7DDB27A3C3D9406C31F2A742E2E425`。
 
@@ -273,7 +307,7 @@ warm 结果：
 
 1. 当前机器没有 Docker、Podman、nerdctl、containerd 或 `ctr` 命令/服务；`wsl.exe --status` exit 50。`Microsoft-Windows-Subsystem-Linux`、`VirtualMachinePlatform`、`Microsoft-Hyper-V-All`、`Containers`、`HypervisorPlatform` 五个可选组件全部为 Disabled。因此无法在本机执行 compose build、真实多 worker owner/loser、完整 Docker fault matrix 和 Docker runtime verifier；未经用户明确授权不能擅自启用系统组件、安装容器运行时或触发重启。
 2. 两项目没有 `.git`，bundled Git 对两个目录 `rev-parse` 均 exit 128；无法提供权威 diff 或 commit。pre-change 四文件改由原始会话中的成功补丁链逆向恢复，权威哈希记录位于会话日志时间 `2026-07-13T06:13:09.236Z`，恢复方法和哈希写入独立 manifest；这不等价于补造 Git 历史。
-3. 原始修改时间点没有预先运行 BEFORE，这一事实仍由 `performance-before.unavailable.json` 保留；现有百分比来自用户批准后新建的 `historical-common-denominator-v1` 透明 HTTPS harness，不冒充原始时间点或严格同策略 schema 基线。`x-tunnel-smux` 继续保持只读且未使用。正式结果只覆盖确定性 loopback 单 worker 成功路径；Docker 10-worker 与真实公网仍需各自证据。
+3. 原始修改时间点没有预先运行 BEFORE，这一事实仍由 `performance-before.unavailable.json` 保留；当前源码百分比来自用户批准后新建的 `historical-common-denominator-v1` 透明 HTTPS harness，对权威恢复快照和当前 `53A15D40…A3B5C` 同条件重跑，不冒充原始时间点或严格同策略 schema 基线。`x-tunnel-smux` 继续保持只读且未使用。正式结果只覆盖确定性 loopback 单 worker 成功路径；Docker 10-worker 与真实公网仍需各自证据。
 4. 2026-07-17 以无代理、无 `JM_*` 环境变量的独立生产进程，对历史测量 AFTER（`index.php=680AF597…18FB7C`）A／恢复版 BEFORE／同一历史 AFTER B 做夹测：三者均 HTTP 502，耗时分别为 1149ms／6875ms／936ms；历史 AFTER 两次均为 5 attempts 且 deadline=0。另一次该历史 AFTER 的真实 latest 烟测为 1544ms、upstream 1493ms。故障均受预算约束，但外部上游可用性不是本仓库能修复的条件；这些结果不属于当前 `index.php=53A15D40…A3B5C`，不能替代当前源码的成功路径 A/B。
 5. 当前 APK 使用 Android Debug 证书。两个项目中 `.jks/.keystore/.p12/.pfx/.pem` 生产密钥文件数量为 0；`KEYSTORE_FILE`、`KEYSTORE_PASSWORD`、`KEY_ALIAS`、`KEY_PASSWORD`、`ANDROID_KEYSTORE`、`SIGNING_KEY` 六个常用进程变量均未设置。功能、v1/v2 签名和仓库指纹一致，但正式长期发布必须由用户提供稳定生产密钥并保持升级签名连续，不能由 AI 擅自替换既有发布身份。
 6. `apksigner` 提示 `META-INF/com/android/build/gradle/app-metadata.properties` 不受 v1 JAR 签名保护；v2 对整包提供保护。
@@ -323,12 +357,12 @@ D:\jm\jmapi-extension\dist-local\
 - **APK 与 Suwayomi 实际回归：完成。**
 - **pre-change 源码恢复：完成；四个权威 SHA-256 全部命中。**
 - **Docker 多 worker 验收：外部阻塞。**
-- **历史同条件运行态 BEFORE/AFTER：绑定 `A88271DC…7A13ED → 680AF597…18FB7C` 的本机 loopback 单 worker 成功路径已完成；Docker 多 worker 和真实公网不在该结论范围。**
-- **当前源码性能 A/B：`index.php=53A15D40…A3B5C` 尚无与其严格匹配的正式 BEFORE/AFTER，不得复用历史百分比。**
+- **历史同条件运行态 BEFORE/AFTER：绑定 `A88271DC…7A13ED → 680AF597…18FB7C` 的旧证据保留。**
+- **当前源码性能 A/B：绑定 `A88271DC…7A13ED → 53A15D40…A3B5C` 的正式本机 loopback 单 worker结果已完成并独立重算；Docker 多 worker和真实公网不在该结论范围。**
 - **生产签名：发布治理待用户提供稳定密钥。**
 
 除非代码、配置、APK 或外部条件发生变化，后续 AI 不应重做本报告已经有新鲜证据的本机工作。
 
 ## 10. 给后续 AI 的简短提示词
 
-> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先核对当前源码、v1.4.15 APK 和报告哈希；未变化时不得重做已有证据的本机测试、历史 A/B 或 Suwayomi 回归。自主完成已具备条件的 Docker 多 worker/fault matrix、当前源码严格 A/B 与交付更新；仅在用户提供稳定密钥后处理生产签名。失败必须定位根因、最小修复并做相关复测；不得改变固定筛选/API/章节/缓存契约，不得伪造 Git、BEFORE、签名或性能百分比。
+> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先核对当前源码、v1.4.15 APK、当前哈希 A/B 证据和报告哈希；未变化时不得重做已有证据的本机测试、性能测量或 Suwayomi 回归。自主完成已具备条件的 Docker 多 worker/fault matrix 与交付更新；仅在用户提供稳定密钥后处理生产签名。失败必须定位根因、最小修复并做相关复测；不得改变固定筛选/API/章节/缓存契约，不得伪造 Git、BEFORE、签名或性能百分比。

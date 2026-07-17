@@ -1231,6 +1231,18 @@ $testHealth = Invoke-RestMethod -Uri "$BaseUrl/?health=1"
 Assert-True ($testHealth.diagnostics.test_mode -eq $true) 'API did not enable JM_TEST_MODE; refusing to run fault tests against real upstream'
 Assert-True (-not [string]::IsNullOrWhiteSpace([string] $testHealth.diagnostics.test_api_source)) 'API did not report a test upstream source; refusing to access real upstream'
 
+# The injected pure-policy suite is part of the default Docker gate, not an
+# optional side command. It gives exact connect/TLS/DNS, Retry-After and
+# completed negative-cache assertions that HTTP timing alone cannot prove.
+$upstreamPolicyOutput = @(& docker compose -f docker-compose.yml -f docker-compose.test.yml `
+    exec -T jmcomic-api php /app/tests/upstream-policy-runtime.php 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "upstream policy runtime failed inside the API container: $($upstreamPolicyOutput -join [Environment]::NewLine)"
+}
+$upstreamPolicyText = $upstreamPolicyOutput -join [Environment]::NewLine
+Assert-True ($upstreamPolicyText.Contains('Upstream policy runtime checks passed.')) `
+    "upstream policy runtime omitted its completion marker: $upstreamPolicyText"
+
 # Domain config sources can all time out without blocking the business request.
 if ($SkipComposeUp) {
     Write-Output 'Skipping domain-source timeout scenario because -SkipComposeUp forbids compose mutation.'
@@ -1271,6 +1283,21 @@ if ($SkipComposeUp) {
         Start-Sleep -Milliseconds 250
         $domainCounts = Get-FixtureCounts $runId
         Assert-True ((Count-Key $domainCounts 'domain-config|/domain-config-timeout||valid-list-80') -eq 1) 'domain refresh lease/negative cache did not suppress a duplicate refresh'
+        $negativeCacheObserved = $false
+        for ($attempt = 1; $attempt -le 40; $attempt++) {
+            $domainHealth = Invoke-RestMethod -Uri "$BaseUrl/?health=1"
+            if ([string] $domainHealth.diagnostics.domains.refresh_suppressed_reason -eq 'negative-cache') {
+                $negativeCacheObserved = $true
+                break
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        Assert-True $negativeCacheObserved 'domain refresh failure completed without exposing negative-cache suppression'
+        $thirdFallback = Invoke-CapturedRequest (Api-Url 'list=latest&page=3&format=min' 'valid-list-80' $runId)
+        Assert-True ($thirdFallback.Status -eq 200) 'third fallback request failed after completed domain refresh failure'
+        Start-Sleep -Milliseconds 250
+        $domainCounts = Get-FixtureCounts $runId
+        Assert-True ((Count-Key $domainCounts 'domain-config|/domain-config-timeout||valid-list-80') -eq 1) 'completed negative cache did not suppress a third refresh'
     } finally {
         $domainRestoreErrors = [Collections.Generic.List[string]]::new()
         foreach ($name in $dockerEnvironmentNames) {
@@ -1357,9 +1384,25 @@ foreach ($scenario in @('bad-json', 'bad-encrypted', 'business-error')) {
 # Failures are never cached: two malformed responses must reach fixture twice.
 $runId = New-RunId
 Reset-Fixture $runId
-1..2 | ForEach-Object { Invoke-CapturedRequest (Api-Url 'list=latest&page=1&format=min' 'bad-json' $runId) | Out-Null }
+1..2 | ForEach-Object {
+    $badJsonResponse = Invoke-CapturedRequest (Api-Url 'list=latest&page=1&format=min' 'bad-json' $runId)
+    Assert-True ([int] (Header-Value $badJsonResponse.Headers 'X-JM-Upstream-Attempts') -eq 1) 'bad JSON must not poll every domain'
+}
 $counts = Get-FixtureCounts $runId
 Assert-True ((Count-Key $counts 'api-good|/latest|0|bad-json') -eq 2) 'bad JSON responses must not enter list cache'
+Assert-True ((Count-Key $counts 'api-502|/latest|0|bad-json') -eq 0) 'bad JSON must not reach a secondary domain'
+Assert-True ((Count-Key $counts 'api-timeout|/latest|0|bad-json') -eq 0) 'bad JSON must not reach a third domain'
+
+$runId = New-RunId
+Reset-Fixture $runId
+1..2 | ForEach-Object {
+    $badEncryptedResponse = Invoke-CapturedRequest (Api-Url 'list=latest&page=1&format=min' 'bad-encrypted' $runId)
+    Assert-True ([int] (Header-Value $badEncryptedResponse.Headers 'X-JM-Upstream-Attempts') -eq 1) 'bad encrypted payload must not poll every domain'
+}
+$counts = Get-FixtureCounts $runId
+Assert-True ((Count-Key $counts 'api-good|/latest|0|bad-encrypted') -eq 2) 'bad encrypted responses must not enter list cache'
+Assert-True ((Count-Key $counts 'api-502|/latest|0|bad-encrypted') -eq 0) 'bad encrypted payload must not reach a secondary domain'
+Assert-True ((Count-Key $counts 'api-timeout|/latest|0|bad-encrypted') -eq 0) 'bad encrypted payload must not reach a third domain'
 
 # Bounded retry: two primary 502 attempts then a secondary success.
 $runId = New-RunId
@@ -1367,6 +1410,10 @@ Reset-Fixture $runId
 $retry = Invoke-CapturedRequest (Api-Url 'list=latest&page=1&format=min' '502-then-valid' $runId)
 Assert-True ($retry.Status -eq 200) '502 failover must succeed on secondary fixture'
 Assert-True ([int] (Header-Value $retry.Headers 'X-JM-Upstream-Attempts') -eq 3) '502 failover must use exactly three attempts'
+$counts = Get-FixtureCounts $runId
+Assert-True ((Count-Key $counts 'api-good|/latest|0|502-then-valid') -eq 2) '502 failover must attempt the primary exactly twice'
+Assert-True ((Count-Key $counts 'api-502|/latest|0|502-then-valid') -eq 1) '502 failover must attempt the secondary exactly once'
+Assert-True ((Count-Key $counts 'api-timeout|/latest|0|502-then-valid') -eq 0) '502 failover must stop after the successful secondary'
 
 foreach ($scenario in @('429-seconds', '429-date', '429-invalid')) {
     $runId = New-RunId
@@ -1374,9 +1421,13 @@ foreach ($scenario in @('429-seconds', '429-date', '429-invalid')) {
     $response = Invoke-CapturedRequest (Api-Url 'list=latest&page=1&format=min' $scenario $runId)
     Assert-True ($response.Status -eq 200) "$scenario must recover on secondary fixture"
     $attempts = [int] (Header-Value $response.Headers 'X-JM-Upstream-Attempts')
-    Assert-True ($attempts -ge 2 -and $attempts -le 3) "$scenario must recover within bounded attempts"
+    Assert-True ($attempts -eq 2) "$scenario 429 scenario must use exactly one primary and one secondary attempt"
     Assert-True ($response.ElapsedMs -lt 12000) "$scenario exceeded request budget"
     if ($scenario -eq '429-invalid') { Assert-True ($response.ElapsedMs -lt 1500) 'invalid Retry-After must not cause long sleep' }
+    $counts = Get-FixtureCounts $runId
+    Assert-True ((Count-Key $counts "api-good|/latest|0|$scenario") -eq 1) "$scenario must reach the primary exactly once"
+    Assert-True ((Count-Key $counts "api-502|/latest|0|$scenario") -eq 1) "$scenario must reach the secondary exactly once"
+    Assert-True ((Count-Key $counts "api-timeout|/latest|0|$scenario") -eq 0) "$scenario must not reach a third domain"
 }
 
 # Overlapping prefetch windows use direct page-owner and slot observations. CDN

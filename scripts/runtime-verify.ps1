@@ -114,6 +114,42 @@ function Invoke-DockerCompose {
     }
 }
 
+function Get-OnDiskImageArtifacts {
+    $scanner = @'
+$roots = ['/app', '/tmp'];
+$imagePaths = [];
+foreach ($roots as $root) {
+    if (!is_dir($root)) continue;
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::LEAVES_ONLY
+    );
+    foreach ($iterator as $entry) {
+        if (!$entry->isFile() || !$entry->isReadable()) continue;
+        $handle = @fopen($entry->getPathname(), 'rb');
+        if ($handle === false) continue;
+        try { $head = fread($handle, 12); } finally { fclose($handle); }
+        if (!is_string($head)) continue;
+        $hex = bin2hex($head);
+        $isImage = str_starts_with($hex, '89504e470d0a1a0a')
+            || str_starts_with($hex, 'ffd8ff')
+            || str_starts_with($head, 'GIF87a')
+            || str_starts_with($head, 'GIF89a')
+            || (str_starts_with($head, 'RIFF') && substr($head, 8, 4) === 'WEBP')
+            || str_starts_with($head, 'BM')
+            || str_starts_with($hex, '49492a00')
+            || str_starts_with($hex, '4d4d002a');
+        if ($isImage) $imagePaths[] = $entry->getPathname();
+    }
+}
+sort($imagePaths, SORT_STRING);
+foreach ($imagePaths as $path) echo $path, "\n";
+'@
+    return @(Invoke-DockerCompose -Arguments @('exec', '-T', 'jmcomic-api', 'php', '-r', $scanner) |
+        ForEach-Object { ([string] $_).Trim() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
 function Get-ImageUrl {
     param(
         [int] $ImagePage,
@@ -177,6 +213,7 @@ if (-not $SkipBuild) {
 Invoke-DockerCompose -Arguments @('up', '-d', '--force-recreate')
 
 $health = Wait-Health
+$imageArtifactsBefore = @(Get-OnDiskImageArtifacts)
 Assert-HeaderExists $health.Headers 'X-JM-API-Version'
 $healthJson = $health.Content | ConvertFrom-Json
 Assert-True ($healthJson.success -eq $true) 'health=1 did not return success=true.'
@@ -265,8 +302,8 @@ Assert-HeaderExists $firstImage.Headers 'X-JM-Singleflight'
 Assert-HeaderExists $firstImage.Headers 'X-JM-Prefetch'
 Assert-HeaderExists $firstImage.Headers 'X-JM-Cache-Store'
 Assert-HeaderEquals $firstImage.Headers 'X-JM-Cache' 'MISS'
-$prefetchStatus = Get-HeaderValue $firstImage.Headers 'X-JM-Prefetch'
-Assert-True ($prefetchStatus -match '^(scheduled|disabled|none|skipped-[a-z-]+)$') "Unexpected low-cardinality prefetch status: $prefetchStatus"
+    Assert-HeaderEquals $firstImage.Headers 'X-JM-Prefetch' 'scheduled'
+    $prefetchStatus = 'scheduled'
 
 Start-Sleep -Seconds $PrefetchWaitSeconds
 $prefetchAfter = Get-HealthJson
@@ -280,12 +317,10 @@ $wallDelta = (Get-PrefetchMetric $prefetchAfter 'wall_ms') - (Get-PrefetchMetric
 Assert-True ($eventDelta -eq 1) "One image scheduling decision must produce one final stats event; got $eventDelta."
 Assert-True ($attemptedDelta -ge 0 -and $cacheHitDelta -ge 0 -and $storedDelta -ge 0 -and $bytesDelta -ge 0 -and $wallDelta -ge 0) 'Prefetch aggregate counters must be monotonic.'
 Assert-True ($cacheHitDelta + $storedDelta -le $attemptedDelta) 'Prefetch cache_hits + stored exceeded attempted.'
-if ($prefetchStatus -eq 'scheduled') {
     Assert-True ($scheduledDelta -eq 1) 'A scheduled callback was not reflected in aggregate stats.'
+    Assert-True ($attemptedDelta -gt 0) 'Default prefetch scheduled no real background attempt.'
+    Assert-True ($storedDelta -gt 0 -and $bytesDelta -gt 0) 'Default prefetch attempted work but stored no downloaded page.'
     Assert-True ($wallDelta -le ([int] $prefetchAfter.diagnostics.prefetch.wall_budget_ms + 1000)) 'Prefetch callback exceeded wall budget tolerance.'
-} else {
-    Assert-True ($scheduledDelta -eq 0 -and $attemptedDelta -eq 0) 'A skipped scheduling decision performed callback work.'
-}
 
 $secondImage = Invoke-JmImageRequest -Url (Get-ImageUrl -ImagePage $defaultPage -DisablePrefetch $true)
 Assert-HeaderEquals $secondImage.Headers 'X-JM-Cache' 'HIT'
@@ -301,13 +336,12 @@ for ($offset = 1; $offset -le $PrefetchPages; $offset++) {
         $prefetched += $candidatePage
     }
 }
-if ($prefetchStatus -eq 'scheduled' -and $attemptedDelta -gt 0) {
     Assert-True ($prefetched.Count -gt 0) 'Scheduled prefetch attempted work but produced no bounded HIT subset.'
     Assert-True ($prefetched.Count -le $storedDelta) 'Observed prefetch HIT subset exceeded stored stats.'
-}
 Write-Output "Observed bounded HIT subset for pages: $($prefetched -join ', ')"
 
-$imageFiles = Invoke-DockerCompose -Arguments @('exec', '-T', 'jmcomic-api', 'sh', '-lc', "find /app -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.gif' \)")
-Assert-True ([string]::IsNullOrWhiteSpace(($imageFiles | Out-String).Trim())) "Unexpected image files were found under /app: ${imageFiles}"
+$imageArtifactsAfter = @(Get-OnDiskImageArtifacts)
+$newImageArtifacts = @($imageArtifactsAfter | Where-Object { $imageArtifactsBefore -notcontains $_ })
+Assert-True ($newImageArtifacts.Count -eq 0) "Decoded image artifacts were written under /app or /tmp: $($newImageArtifacts -join ', ')"
 
 Write-Output 'Runtime verification passed.'
