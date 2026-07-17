@@ -11,6 +11,7 @@ param(
     [switch] $BootstrapDiagnosticsSelfTest,
     [string] $PhpPath = '',
     [string] $ApcuExtension = '',
+    [string] $DockerLogPath = '.\performance-evidence\fault-injection-runtime-docker.log',
     [ValidateRange(1, 65535)]
     [int] $LocalApiPort = 18088,
     [ValidateRange(1, 65535)]
@@ -58,6 +59,11 @@ function Count-Key { param($Counts, [string] $Key); $property = $Counts.PSObject
 function Prefetch-Metric {
     param($Health, [string] $Name)
     $property = $Health.diagnostics.prefetch.aggregate.PSObject.Properties[$Name]
+    return $(if ($null -eq $property) { 0 } else { [long] $property.Value })
+}
+function Prefetch-SkipMetric {
+    param($Health, [string] $Name)
+    $property = $Health.diagnostics.prefetch.aggregate.skip_counts.PSObject.Properties[$Name]
     return $(if ($null -eq $property) { 0 } else { [long] $property.Value })
 }
 function Api-Url { param([string] $Query, [string] $Scenario, [string] $RunId); return "$BaseUrl/?$Query&test_scenario=$Scenario&test_run_id=$RunId" }
@@ -1215,27 +1221,30 @@ if ($LocalDomainRefresh) {
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'docker is not available on PATH; fault-injection runtime verification requires Docker.'
 }
-if (-not $SkipComposeUp) {
-    & docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build --force-recreate
-    if ($LASTEXITCODE -ne 0) { throw 'test compose startup failed' }
-}
+$verificationError = $null
+$dockerFinalizationErrors = [Collections.Generic.List[string]]::new()
+try {
+    if (-not $SkipComposeUp) {
+        & docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build --force-recreate
+        if ($LASTEXITCODE -ne 0) { throw 'test compose startup failed' }
+    }
 
-for ($attempt = 1; $attempt -le 30; $attempt++) {
-    try { Invoke-WebRequest -UseBasicParsing -Uri "$FixtureUrl/__stats?run_id=ready-check" | Out-Null; break } catch { if ($attempt -eq 30) { throw 'fixture did not become ready' }; Start-Sleep -Seconds 1 }
-}
+    for ($attempt = 1; $attempt -le 30; $attempt++) {
+        try { Invoke-WebRequest -UseBasicParsing -Uri "$FixtureUrl/__stats?run_id=ready-check" | Out-Null; break } catch { if ($attempt -eq 30) { throw 'fixture did not become ready' }; Start-Sleep -Seconds 1 }
+    }
 
-for ($attempt = 1; $attempt -le 30; $attempt++) {
-    try { Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/?health=1" | Out-Null; break } catch { if ($attempt -eq 30) { throw }; Start-Sleep -Seconds 1 }
-}
-$testHealth = Invoke-RestMethod -Uri "$BaseUrl/?health=1"
-Assert-True ($testHealth.diagnostics.test_mode -eq $true) 'API did not enable JM_TEST_MODE; refusing to run fault tests against real upstream'
-Assert-True (-not [string]::IsNullOrWhiteSpace([string] $testHealth.diagnostics.test_api_source)) 'API did not report a test upstream source; refusing to access real upstream'
+    for ($attempt = 1; $attempt -le 30; $attempt++) {
+        try { Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/?health=1" | Out-Null; break } catch { if ($attempt -eq 30) { throw }; Start-Sleep -Seconds 1 }
+    }
+    $testHealth = Invoke-RestMethod -Uri "$BaseUrl/?health=1"
+    Assert-True ($testHealth.diagnostics.test_mode -eq $true) 'API did not enable JM_TEST_MODE; refusing to run fault tests against real upstream'
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string] $testHealth.diagnostics.test_api_source)) 'API did not report a test upstream source; refusing to access real upstream'
 
 # The injected pure-policy suite is part of the default Docker gate, not an
 # optional side command. It gives exact connect/TLS/DNS, Retry-After and
 # completed negative-cache assertions that HTTP timing alone cannot prove.
 $upstreamPolicyOutput = @(& docker compose -f docker-compose.yml -f docker-compose.test.yml `
-    exec -T jmcomic-api php /app/tests/upstream-policy-runtime.php 2>&1)
+    exec -T jmcomic-api php -d apc.enable_cli=1 /app/tests/upstream-policy-runtime.php 2>&1)
 if ($LASTEXITCODE -ne 0) {
     throw "upstream policy runtime failed inside the API container: $($upstreamPolicyOutput -join [Environment]::NewLine)"
 }
@@ -1285,7 +1294,7 @@ if ($SkipComposeUp) {
         Assert-True ((Count-Key $domainCounts 'domain-config|/domain-config-timeout||valid-list-80') -eq 1) 'domain refresh lease/negative cache did not suppress a duplicate refresh'
         $negativeCacheObserved = $false
         for ($attempt = 1; $attempt -le 40; $attempt++) {
-            $domainHealth = Invoke-RestMethod -Uri "$BaseUrl/?health=1"
+            $domainHealth = Invoke-RestMethod -Uri "$BaseUrl/?health=1&test_run_id=$runId"
             if ([string] $domainHealth.diagnostics.domains.refresh_suppressed_reason -eq 'negative-cache') {
                 $negativeCacheObserved = $true
                 break
@@ -1318,6 +1327,72 @@ if ($SkipComposeUp) {
         }
         if ($domainRestoreErrors.Count -gt 0) {
             throw 'Docker domain-source cleanup failed: ' + (@($domainRestoreErrors) -join ' | ')
+        }
+    }
+}
+
+# Force the real container below the prefetch waterline. The direct image must
+# still succeed, while no page lease, slot, callback or background byte may be
+# produced. This requires compose interpolation rather than a hard-coded value.
+if ($SkipComposeUp) {
+    Write-Output 'Skipping low-memory prefetch scenario because -SkipComposeUp forbids compose mutation.'
+} else {
+    $lowMemoryEnvironmentNames = @('JM_PREFETCH_MIN_FREE_BYTES', 'JM_PREFETCH_MIN_FREE_RATIO')
+    $savedLowMemoryEnvironment = @{}
+    foreach ($name in $lowMemoryEnvironmentNames) {
+        $savedLowMemoryEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    try {
+        $env:JM_PREFETCH_MIN_FREE_BYTES = '536870912'
+        $env:JM_PREFETCH_MIN_FREE_RATIO = '100'
+        & docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --force-recreate jmcomic-api
+        if ($LASTEXITCODE -ne 0) { throw 'failed to recreate API for low-memory prefetch test' }
+        for ($attempt = 1; $attempt -le 30; $attempt++) {
+            try {
+                $lowMemoryHealth = Invoke-RestMethod -Uri "$BaseUrl/?health=1"
+                if ([long] $lowMemoryHealth.diagnostics.cache_policy.prefetch_min_free_bytes -eq 536870912 -and
+                    [int] $lowMemoryHealth.diagnostics.cache_policy.prefetch_min_free_ratio -eq 100) { break }
+            } catch {}
+            if ($attempt -eq 30) { throw 'low-memory prefetch configuration did not become active' }
+            Start-Sleep -Seconds 1
+        }
+        $runId = New-RunId
+        Reset-Fixture $runId
+        $lowMemoryBefore = Invoke-RestMethod -Uri "$BaseUrl/?health=1&test_run_id=$runId"
+        $lowMemoryImage = Invoke-CapturedRequest (Api-Url 'jmid=350234&chapter=350234&page=1' 'prefetch-slow' $runId)
+        Assert-True ($lowMemoryImage.Status -eq 200) 'low-memory policy blocked the current image'
+        Assert-True ((Header-Value $lowMemoryImage.Headers 'X-JM-Prefetch') -eq 'skipped-low-memory') 'low-memory request did not report skipped-low-memory'
+        Start-Sleep -Seconds 1
+        $lowMemoryStats = Get-FixtureStats $runId
+        Assert-True (@($lowMemoryStats.prefetch_owners.pages.PSObject.Properties).Count -eq 0) 'low-memory prefetch acquired a page owner'
+        Assert-True ([int] $lowMemoryStats.prefetch_owners.slots.acquire -eq 0) 'low-memory prefetch acquired an active slot'
+        $lowMemoryAfter = Invoke-RestMethod -Uri "$BaseUrl/?health=1&test_run_id=$runId"
+        Assert-True ((Prefetch-Metric $lowMemoryAfter 'events') - (Prefetch-Metric $lowMemoryBefore 'events') -eq 1) 'low-memory decision did not produce exactly one event'
+        foreach ($metric in @('scheduled', 'attempted', 'cache_hits', 'stored', 'bytes', 'wall_ms')) {
+            Assert-True ((Prefetch-Metric $lowMemoryAfter $metric) - (Prefetch-Metric $lowMemoryBefore $metric) -eq 0) "low-memory policy changed background metric ${metric}"
+        }
+        Assert-True ((Prefetch-SkipMetric $lowMemoryAfter 'skipped-low-memory') - (Prefetch-SkipMetric $lowMemoryBefore 'skipped-low-memory') -eq 1) 'low-memory skip counter did not increase exactly once'
+    } finally {
+        $lowMemoryRestoreErrors = [Collections.Generic.List[string]]::new()
+        foreach ($name in $lowMemoryEnvironmentNames) {
+            try { [Environment]::SetEnvironmentVariable($name, $savedLowMemoryEnvironment[$name], 'Process') } catch {
+                $lowMemoryRestoreErrors.Add("Failed to restore $($name): $($_.Exception.Message)")
+            }
+        }
+        try {
+            & docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --force-recreate jmcomic-api
+            if ($LASTEXITCODE -ne 0) { throw 'failed to restore API after low-memory prefetch test' }
+            for ($attempt = 1; $attempt -le 30; $attempt++) {
+                try { Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/?health=1" | Out-Null; break } catch {
+                    if ($attempt -eq 30) { throw }
+                    Start-Sleep -Seconds 1
+                }
+            }
+        } catch {
+            $lowMemoryRestoreErrors.Add($_.Exception.Message)
+        }
+        if ($lowMemoryRestoreErrors.Count -gt 0) {
+            throw 'Docker low-memory cleanup failed: ' + (@($lowMemoryRestoreErrors) -join ' | ')
         }
     }
 }
@@ -1379,6 +1454,10 @@ foreach ($scenario in @('bad-json', 'bad-encrypted', 'business-error')) {
     foreach ($header in @('X-JM-Request-Id', 'X-JM-Upstream-Attempts', 'X-JM-Upstream-Ms', 'X-JM-Deadline-Exhausted')) {
         Assert-True (-not [string]::IsNullOrWhiteSpace((Header-Value $response.Headers $header))) "$scenario missing $header"
     }
+    Assert-True ((Header-Value $response.Headers 'X-JM-Request-Id') -match '^[0-9a-f]{16}$') "$scenario returned a malformed request id"
+    Assert-True ((Header-Value $response.Headers 'X-JM-Upstream-Attempts') -match '^\d+$') "$scenario returned malformed upstream attempts"
+    Assert-True ((Header-Value $response.Headers 'X-JM-Upstream-Ms') -match '^\d+$') "$scenario returned malformed upstream milliseconds"
+    Assert-True ((Header-Value $response.Headers 'X-JM-Deadline-Exhausted') -match '^[01]$') "$scenario returned an invalid deadline flag"
 }
 
 # Failures are never cached: two malformed responses must reach fixture twice.
@@ -1550,10 +1629,30 @@ Assert-True ($cdn.Status -eq 200) 'CDN failover request failed'
 $counts = Get-FixtureCounts $runId
 Assert-True ((Count-Key $counts 'cdn-fail|/media/photos/350234/00001.png||cdn-502') -eq 1) 'failing CDN must be attempted exactly once'
 Assert-True ((Count-Key $counts 'cdn-good|/media/photos/350234/00001.png||cdn-502') -eq 1) 'good CDN must be attempted exactly once'
+$cdnObservedProperties = @($counts.PSObject.Properties |
+    Where-Object { $_.Name -match '^[^|]+\|/media/photos/[^|]+\|\|cdn-502$' })
+$cdnObservedKeys = @($cdnObservedProperties | ForEach-Object { $_.Name })
+$cdnObservedRequestCount = 0
+foreach ($property in $cdnObservedProperties) {
+    $cdnObservedRequestCount += [int] $property.Value
+}
+Assert-True ($cdnObservedKeys.Count -eq 2) "CDN failover observed an unexpected number of hosts: $($cdnObservedKeys -join ', ')"
+Assert-True ($cdnObservedRequestCount -eq 2) "CDN failover performed an unexpected number of media requests: $cdnObservedRequestCount"
+$expectedCdnKeys = @(
+    'cdn-fail|/media/photos/350234/00001.png||cdn-502',
+    'cdn-good|/media/photos/350234/00001.png||cdn-502'
+)
+Assert-True (@($cdnObservedKeys | Where-Object { $expectedCdnKeys -notcontains $_ }).Count -eq 0) `
+    "CDN failover reached a host outside the explicit allowlist: $($cdnObservedKeys -join ', ')"
 
 # Untrusted forwarded headers must not control the effective client IP.
 $runId = New-RunId
 Reset-Fixture $runId
+$direct = Invoke-CapturedRequest (Api-Url 'list=latest&page=3&format=min' 'valid-list-80' $runId)
+Assert-True ($direct.Status -eq 200) 'direct client-IP control request failed'
+$directClientIp = Header-Value $direct.Headers 'X-JM-Test-Client-Ip'
+$parsedDirectIp = $null
+Assert-True ([System.Net.IPAddress]::TryParse($directClientIp, [ref] $parsedDirectIp)) 'direct REMOTE_ADDR control is not a valid IP address'
 $proxy = Invoke-CapturedRequest (Api-Url 'list=latest&page=1&format=min' 'valid-list-80' $runId) 'GET' @{ 'X-Forwarded-For' = '203.0.113.99' }
 Assert-True ($proxy.Status -eq 200) 'proxy spoof test request failed'
 $effectiveIp = Header-Value $proxy.Headers 'X-JM-Test-Client-Ip'
@@ -1561,10 +1660,64 @@ Assert-True (-not [string]::IsNullOrWhiteSpace($effectiveIp)) 'test client IP di
 $parsedIp = $null
 Assert-True ([System.Net.IPAddress]::TryParse($effectiveIp, [ref] $parsedIp)) 'test client IP diagnostic is not a valid IP address'
 Assert-True ($effectiveIp -ne '203.0.113.99') 'untrusted X-Forwarded-For controlled effective client IP'
+Assert-True ($effectiveIp -eq $directClientIp) 'untrusted forwarded header did not preserve the direct REMOTE_ADDR control'
 
 # Trusted proxy positive path: test mode allows loopback proxy CIDR and then accepts forwarded client IP.
 $trusted = Invoke-CapturedRequest (Api-Url 'list=latest&page=2&format=min&test_trusted_proxy=1' 'valid-list-80' $runId) 'GET' @{ 'X-Forwarded-For' = '198.51.100.7' }
 Assert-True ($trusted.Status -eq 200) 'trusted proxy positive test failed'
 Assert-True ((Header-Value $trusted.Headers 'X-JM-Test-Client-Ip') -eq '198.51.100.7') 'trusted proxy did not accept forwarded client IP'
+} catch {
+    $verificationError = $_
+} finally {
+    if (-not $SkipComposeUp) {
+        try {
+            $dockerLogs = @(& docker compose -f docker-compose.yml -f docker-compose.test.yml `
+                logs --no-color jmcomic-api jm-upstream-fixture 2>&1)
+            if ($LASTEXITCODE -ne 0) { throw 'failed to capture Docker fault-injection logs' }
+            $resolvedLogPath = [System.IO.Path]::GetFullPath($DockerLogPath)
+            $logDirectory = Split-Path -Parent $resolvedLogPath
+            if (-not (Test-Path -LiteralPath $logDirectory -PathType Container)) {
+                New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+            }
+            [System.IO.File]::WriteAllLines(
+                $resolvedLogPath,
+                [string[]] $dockerLogs,
+                (New-Object System.Text.UTF8Encoding($false))
+            )
+        } catch {
+            $dockerFinalizationErrors.Add("Log capture failed: $($_.Exception.Message)")
+        }
+        try {
+            & docker compose -f docker-compose.yml -f docker-compose.test.yml down -v --remove-orphans
+            if ($LASTEXITCODE -ne 0) { throw 'failed to remove Docker test overlay' }
+        } catch {
+            $dockerFinalizationErrors.Add("Test overlay removal failed: $($_.Exception.Message)")
+        }
+        try {
+            & docker compose up -d --force-recreate --remove-orphans
+            if ($LASTEXITCODE -ne 0) { throw 'failed to restore production compose stack' }
+            $productionHealth = $null
+            for ($attempt = 1; $attempt -le 30; $attempt++) {
+                try {
+                    $productionHealth = Invoke-RestMethod -Uri "$BaseUrl/?health=1"
+                    if ($productionHealth.success -eq $true) { break }
+                } catch {}
+                if ($attempt -eq 30) { throw 'restored production stack did not become healthy' }
+                Start-Sleep -Seconds 1
+            }
+            Assert-True ($productionHealth.diagnostics.test_mode -eq $false) 'restored production stack still has JM_TEST_MODE enabled'
+        } catch {
+            $dockerFinalizationErrors.Add("Production restore failed: $($_.Exception.Message)")
+        }
+    }
+}
 
-Write-Output 'Fault-injection runtime verification passed.'
+if ($dockerFinalizationErrors.Count -gt 0) {
+    throw 'Docker fault-injection finalization failed: ' + (@($dockerFinalizationErrors) -join ' | ')
+}
+if ($null -ne $verificationError) { throw $verificationError }
+if ($SkipComposeUp) {
+    Write-Output 'Fault-injection runtime partial verification passed; compose-mutation scenarios were skipped.'
+} else {
+    Write-Output 'Fault-injection runtime verification passed.'
+}

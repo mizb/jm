@@ -208,7 +208,7 @@ $composeText = Get-Content -LiteralPath (Join-Path $projectRoot 'docker-compose.
 Assert-True ($composeText -notmatch '/app/cache') 'docker-compose.yml must not contain an /app/cache volume.'
 
 if (-not $SkipBuild) {
-    Invoke-DockerCompose -Arguments @('build')
+    Invoke-DockerCompose -Arguments @('build', '--no-cache')
 }
 Invoke-DockerCompose -Arguments @('up', '-d', '--force-recreate')
 

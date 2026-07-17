@@ -2,7 +2,7 @@
 
 This prompt was used for the 2026-07-07 advanced reader optimization implementation. A later homepage/weekly-list follow-up brought the current implemented API version to `2026.07.07.7`. Reuse it only for audit, regression repair, or follow-up maintenance, and first compare it against the current code so you do not re-implement completed work.
 
-Current cross-project performance maintenance version: `2026.07.17.1`.
+Current cross-project performance maintenance version: `2026.07.17.2`.
 
 ```text
 You are an autonomous senior coding agent working on the user's Windows machine. Your job is to fully implement, test, document, and prepare deployment for the advanced JM API reader optimizations. Do not stop at analysis or a plan. Continue until complete delivery, unless a required external tool is missing.

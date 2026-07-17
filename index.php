@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.17.1';
+    public const APP_VERSION    = '2026.07.17.2';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -75,7 +75,7 @@ final class JmConfig
     public const CONNECT_TIMEOUT = 5;
     public const MAX_RETRIES     = 2;
     public const DEFAULT_REQUEST_BUDGET_MS = 12000;
-    public const DEFAULT_MAX_UPSTREAM_ATTEMPTS = 6;
+    public const DEFAULT_MAX_UPSTREAM_ATTEMPTS = 10;
 
     // ── Security limits ──
     public const RATE_WINDOW       = 60;    // sliding window (seconds)
@@ -2478,6 +2478,11 @@ final class JmApiClient
         $lastFailure = null;
         $budgetDenied = false;
         $ordered = $this->domainHealth->orderedDomains($this->baseUrls);
+        if (count($ordered) > 1) {
+            // Network failures still rotate immediately. A second bounded pass
+            // recovers transient TLS/connect resets without the legacy 15-attempt tail.
+            $ordered = array_merge($ordered, $ordered);
+        }
 
         foreach ($ordered as $baseIndex => $baseUrl) {
             $attemptsForBaseUrl = $baseIndex === 0 ? 2 : 1;
@@ -2590,6 +2595,9 @@ final class JmApiClient
         $urlPath = JmConfig::ENDPOINT_SCRAMBLE . '?' . $query;
         $lastFailure = null;
         $ordered = $this->domainHealth->orderedDomains($this->baseUrls);
+        if (count($ordered) > 1) {
+            $ordered = array_merge($ordered, $ordered);
+        }
 
         foreach ($ordered as $baseIndex => $baseUrl) {
             $attemptsForBaseUrl = $baseIndex === 0 ? 2 : 1;

@@ -2,17 +2,18 @@
 
 日期：2026-07-17  
 范围：`D:\jm\jmcomic-api-main`、`D:\jm\jmapi-extension`  
-状态：**当前源码的本机可执行代码优化、针对性测试、v1.4.15 构建/元数据、真实 Suwayomi 回归，以及当前 `index.php` 哈希对应的正式同条件性能 A/B 已完成。尚未闭环的是需要容器运行时的 Docker 多 worker 验收；生产签名属于发布治理待办，不是本计划的代码完成门槛。**
+状态：**API `2026.07.17.2` 已针对“老版可用、新版 502”增加受总预算约束的双轮快速切域并通过聚焦回归；v1.4.15 APK 无需变更。正式性能 A/B 严格绑定上一版 `2026.07.17.1 / 53A15D40…A3B5C`，不能冒充当前 `.2` 哈希；Docker 多 worker/fault 实跑仍待容器运行时。**
 
 ## 1. 结论与边界
 
-- API 交付版本：`2026.07.17.1`。
+- API 交付版本：`2026.07.17.2`。
 - 扩展交付版本：`1.4.15`，`versionCode = 15`。
 - 筛选显示已固定为中文：`排序 / 最新 / 最多浏览 / 最多点赞`。
 - Popular 固定映射 `list=promote`，Latest 固定映射 `list=weekly`；空搜索、标题搜索和 JM ID/URL 搜索契约均已在 Suwayomi 实际请求中验证。
 - 请求预算、短 TTL 缓存、域名刷新隔离、预取资源预算、图片资源边界、Redis 限流、可信代理和扩展 URL/章节逻辑均已实现并通过本机测试。
-- 已从 Codex 原始补丁日志逆向恢复 pre-change 源码，并逐文件命中行为修改前记录的四个 SHA-256；获批的 loopback-only 透明 HTTPS harness 已对恢复版 `A88271DC…7A13ED` 与当前 `2026.07.17.1 / index.php=53A15D40…A3B5C` 完成同条件成功路径 A/B。
-- 当前哈希 A/B 中，fixture 上游请求 `397 → 7`（减少 `98.237%`），latest page 1/page 4/album p50 分别改善 `23.738% / 28.243% / 37.268%`，5 条路由 p95/p99 均改善；health 和图片 p50 分别回退 `10.486% / 14.550%`。10 客户端图片队列 wall `275.700ms → 135.304ms`。这些结果只覆盖确定性 loopback、Windows PHP built-in 单 worker，不外推为 Docker 多 worker或真实公网绝对延迟。
+- 已从 Codex 原始补丁日志逆向恢复 pre-change 源码，并逐文件命中行为修改前记录的四个 SHA-256；获批的 loopback-only 透明 HTTPS harness 已对恢复版 `A88271DC…7A13ED` 与上一版 `2026.07.17.1 / index.php=53A15D40…A3B5C` 完成同条件成功路径 A/B。
+- 上一版哈希 A/B 中，fixture 上游请求 `397 → 7`（减少 `98.237%`），latest page 1/page 4/album p50 分别改善 `23.738% / 28.243% / 37.268%`，5 条路由 p95/p99 均改善；health 和图片 p50 分别回退 `10.486% / 14.550%`。10 客户端图片队列 wall `275.700ms → 135.304ms`。这些结果不绑定 `.2`，且只覆盖确定性 loopback、Windows PHP built-in 单 worker。
+- 2026-07-17 现场出现老版正常而 `.1` 新版 Latest 返回 HTTP 502。并排复现显示老版网络失败路径最多 15 次，而 `.1` 只对五域各试一次并闲置第六次预算。`.2` 改为五域最多两轮、默认 10 次，但仍由 12 秒 wall budget 硬限制；确定性回归证明第 6 次及第 10 次瞬态恢复均可成功，JSON/解密/业务错误仍不切域。
 - 早先绑定 `2026.07.13.2 / index.php=680AF597…18FB7C` 的 A/B 继续作为独立历史证据保留；不得与当前哈希结果混用。
 - 两个目录都没有 `.git`。文件清单来自当前文件系统和实施计划，不是 Git diff；不伪造提交、提交哈希或版本历史。
 - 两个交付项目分别是 PHP 和 Kotlin/Android 项目，没有 `go.mod` 或 Go 源码。将其改写为 Go 会改变既定部署/API 架构，本轮未擅自迁移；“使用最新 Go”对当前两项目不适用。
@@ -75,13 +76,18 @@
 
 | 文件 | SHA-256 |
 |---|---|
-| `jmcomic-api-main/index.php` | `53A15D40E711A91B80C1334E11EE4D358A737BBB785F86FC5C25069C217A3B5C` |
-| `jmcomic-api-main/Dockerfile` | `5ADF75CA12E2A958B18527D4804B425AC09918559D24D3B2974815B2B50BC039` |
-| `jmcomic-api-main/docker-compose.yml` | `7E6AE033C94452510576FF53DCD3C21FD87BFDE464E2711D9027C6BBECDBB566` |
-| `jmcomic-api-main/docker-entrypoint.sh` | `35B46FC552001959CBEAD40A5576B2CA0A8E3F027E411943AE4725686C6A34B7` |
+| `jmcomic-api-main/index.php` | `7A2AC07AE89CA4EE0ADB4F4B8435C8038CE656769295FD48B8126F01CD870484` |
+| `jmcomic-api-main/Dockerfile` | `F01979B07233F2442052889540F4B52DE941FB61CC254D4C5435137CA5A78713` |
+| `jmcomic-api-main/docker-compose.yml` | `6EE939B1DFB03EC5B1187EB500C80668AA9FFEA9EE2B70533601D6ADB205C077` |
+| `jmcomic-api-main/docker-entrypoint.sh` | `412CE4401A8CD67568309653326A1467C626AAD5521A40FB5FA636197B79F33D` |
 | `scripts/performance-baseline.ps1` | `C4B65EA3CC810F0E3C5E20523A5E389C0B303B0539263A40138A054E18C0A65F` |
 | `scripts/performance-evidence.ps1` | `35238705319F7E7344F200A2D85D71C903124FA8BF52A304350C01CBD342D5F0` |
+| `scripts/runtime-verify.ps1` | `68F2DF3C4CDAC6593DBDF846B2668E080FB6971E3A72835B3D7B09DD74D542BE` |
 | `scripts/transparent-https-performance.ps1` | `CC3362851AEC1E209ABC66BB7B419DFC5DF9DB7F93A6ABB5A4CEE36895BEF6D9` |
+| `tests/upstream-policy-runtime.php` | `387786F9796B4ED5CC4C6F2EFD494889B33D70B182753A28E2BE1E1E0707C93E` |
+| `tests/fault-injection-runtime.ps1` | `033D13C8093569C346FE4826CE7F850546AEA8BCEECD4348275AB22CE55A4AC0` |
+| `tests/docker-runtime-contract.ps1` | `DCC020E3D5CD18A25ACCAC1031B6FC37587A1B582D6A53F9DF1BAD2FC8099E72` |
+| `tests/performance-policy-contract.ps1` | `027F8C80F6BF63DE56EC70C692D921E46AE13276C380E0F8EE622A2BD82CD217` |
 | `tests/fixtures/transparent_https_proxy.py` | `CD97F28D9577A13BA47CA7D79E017611A2993BC96213BD5CF105FB95879808E2` |
 | `tests/fixtures/transparent_https_probe.php` | `A3A41A8D61CE5264D41590E77EF3E50F49D255BB8C63611A0DCC354A37AB2F0F` |
 | `tests/fixtures/upstream-router.php` | `38B7A9DDD6B560260991AF83A17D25106701C8147BE6BD361D831227C560AF7D` |
@@ -113,7 +119,7 @@
 | 验证 | 结果 |
 |---|---|
 | API 静态合同 | list、page、docker contract、adoption hardening、performance policy 共 5 项，全部 exit 0 |
-| 上游策略运行时 | PASS；覆盖网络类错误、502、429 秒值/HTTP-date/非法值、协议/解密/业务错误、scramble fallback、域名源失败及预算分类 |
+| 上游策略运行时 | PASS；新增第 6/10 次瞬态 TLS 恢复、两轮五域顺序和 10 次硬上限；原有 502、429、协议/解密/业务错误、scramble fallback、域名源失败及预算分类继续通过 |
 | 预取策略运行时 | PASS；`budget-attempts`、`budget-wall` 与真实 `executor-error` 分类通过 |
 | 资源策略 | 73/73 PASS |
 | catalog order | PASS |
@@ -132,33 +138,33 @@
 | APK/元数据 | v1.4.15 aapt2 manifest、v1/v2 签名、实际证书、3 个 JSON 回读、APK 名称/版本/哈希一致性全部通过 |
 | 真实 Suwayomi | 2.3.2243 + Java 21；v1.4.15 installed=true/hasUpdate=false，中文筛选/设置、5 条浏览搜索路径、详情、章节、12 页与 WebP 图片通过；预取 disabled `0→1`、重新启用后保持 `1` |
 | 透明 HTTPS 代理 runtime | PASS；listen/upstream 仅 loopback、真实 TLS/SAN/Host 转发、非白名单 403、加密 config、系统 CA 隔离和受控清理 |
-| 当前哈希同条件 A/B smoke | PASS；`A88271DC…7A13ED → 53A15D40…A3B5C`，warmup=1、iterations=2、concurrency=2；五路由、实时实例身份、四文件历史快照、loopback 覆盖和 cleanup 均通过 |
+| `.1` 哈希同条件 A/B smoke | PASS；`A88271DC…7A13ED → 53A15D40…A3B5C`，warmup=1、iterations=2、concurrency=2；不代表 `.2` |
 | 历史哈希绑定的正式成功路径 A/B | PASS；warmup=10、iterations=120、concurrency=10；BEFORE/AFTER 各 600 个 warm 样本全部 status 200 且业务合同通过，`comparable=true`；不代表当前 `index.php` |
-| 当前哈希正式成功路径 A/B | PASS；`A88271DC…7A13ED → 53A15D40…A3B5C`，warmup=10、iterations=120、concurrency=10；BEFORE/AFTER 各 600 个 warm 样本全部 status 200、`contract_valid=true`、`comparable=true` |
+| `.1` 哈希正式成功路径 A/B | PASS；`A88271DC…7A13ED → 53A15D40…A3B5C`，warmup=10、iterations=120、concurrency=10；BEFORE/AFTER 各 600 个 warm 样本全部 status 200、`contract_valid=true`、`comparable=true`；不代表 `.2` |
 | 当前正式证据独立重算 | PASS；逐路由从 120 个原始样本重算 p50/p95/p99，复核 397→7 fixture 次数、源码/四文件哈希、临时 CA 不在系统根、进程/环境/临时目录清理；报告 SHA-256 `6ECB423E…2F9B5` |
 
-静态 `docker-runtime-contract.ps1` 只证明 compose/runtime verifier 的文本合同，不能替代真实 Docker 运行；真实 Docker 状态见第 7 节。
+静态 `docker-runtime-contract.ps1` 只证明 compose/runtime verifier 的文本合同，不能替代真实 Docker 运行。低内存场景由 standalone runtime verifier 与 fault matrix 的组合门禁覆盖，其中强制阈值覆盖及 `skipped-low-memory` 运行断言位于 fault matrix；当前机器未执行该 Docker 组合门禁。
 
 ### 4.1 实施计划 Task 1～10 完成审计
 
 | 计划任务 | 当前证据 | 审计结论 |
 |---|---|---|
 | Task 1 基线、合同、fixture | 集中合同、加密 fixture、纯策略测试、fault/runtime、after-only 和透明 HTTPS common-denominator A/B 均存在并通过；`performance-before.unavailable.json` 仍保留原始时间点未测量的事实 | 精确 pre-change 源码已恢复；没有伪装原始 BEFORE，而是用恢复源码在获批的新 harness 中重新运行并单独标注证据模式 |
-| Task 2 统一请求预算 | `RequestContext/UpstreamBudget/HttpResult/UpstreamTransport` 合同与运行测试通过；attempt/wall/真实失败分类通过 | 完成 |
+| Task 2 统一请求预算 | 默认 12 秒 wall/10 次 attempt；网络错误快速切域并最多两轮，502 首选域最多额外一次；确定性第 6/10 次恢复通过 | 完成 |
 | Task 3 域名刷新隔离 | fresh/stale/fallback、lease、失败抑制、health 不触发 I/O 和本地黑洞刷新测试通过 | 本机完成；Docker worker 占用仍属于第 7 节外部验收 |
 | Task 4 列表源页缓存 | latest/popular/search/weekly/promote、空值/malformed/redirect/`TTL=0` 精确计数通过 | 本机完成；真实 compose 多 worker 复验待 Docker |
 | Task 5 album/week 缓存 | 同 ID、不同 ID、fresh/refresh/stale/expired/`TTL=0` 精确计数通过 | 单 worker 与策略完成；10 worker owner/loser 只能在 Docker 环境最终验收 |
 | Task 6 预取预算与去重 | authority flock、APCu 镜像重建、foreign token、续租、slot、wall/byte/active、`prefetch=0` 和预算停止原因测试通过 | 本机策略完成；compose 多 worker overlap 待 Docker |
 | Task 7 CDN/图片/Redis | chapter/manifest v2、相对路径、CDN failover、压缩字节/像素/容器/解码边界 71/71；真实 Redis 16 worker 原子限流通过 | 完成 |
 | Task 8 扩展修复 | 中文化、URL builder/basePath、ID/章节、页面 URL 权威来源和预取双向同步合同通过；v1.4.15 构建、元数据、签名和 Suwayomi 实际请求通过 | 完成 |
-| Task 9 版本与文档 | API 统一 `2026.07.17.1`；扩展 README/Gradle/APK/index 统一 v1.4.15/code 15 | 完成 |
-| Task 10 完整验证 | 静态/纯策略/本地 HTTP/Redis/YAML/Gradle/APK/Suwayomi/after-only/当前哈希透明 HTTPS A/B/report 均有证据；pre-change 四文件恢复并通过哈希/语法验证 | 当前源码本机单 worker 成功路径 compare 已完成；Docker runtime/fault matrix 仍受外部环境阻塞 |
+| Task 9 版本与文档 | API 统一 `2026.07.17.2`；扩展 README/Gradle/APK/index 统一 v1.4.15/code 15 | 完成 |
+| Task 10 完整验证 | `.2` 聚焦策略、列表、请求预算、Docker 文本合同和 PHP lint 通过；完整 A/B 仍只绑定 `.1` | `.2` 等待部署现场复验；Docker runtime/fault matrix 仍受外部环境阻塞 |
 
 Git 提交步骤属于所有 Task 的条件性步骤。两个目标目录从开始到当前都没有 `.git`，因此这些步骤按计划 Preflight 第 49 行记录为“不适用/不可执行”，不能用无来源提交代替。
 
 ## 5. 性能证据
 
-### 5.1 当前源码透明 HTTPS 同条件成功路径 A/B
+### 5.1 上一版 `.1` 透明 HTTPS 同条件成功路径 A/B
 
 正式证据：`D:\jm\jmcomic-api-main\performance-evidence\transparent-https-current-ab-20260717.json`  
 SHA-256：`6ECB423EFE3A2B66B196B1AEC9D15D96CA8F1DB0732ABD01181A24F5CDB2F9B5`  
@@ -168,7 +174,7 @@ SHA-256：`6ECB423EFE3A2B66B196B1AEC9D15D96CA8F1DB0732ABD01181A24F5CDB2F9B5`
 证据严格绑定：
 
 - BEFORE：API `2026.07.13.1`，`index.php=A88271DCD759CDB4992FB2C49C963441FDA7028201E991211CD4DE4B497A13ED`。
-- AFTER：当前 API `2026.07.17.1`，`index.php=53A15D40E711A91B80C1334E11EE4D358A737BBB785F86FC5C25069C217A3B5C`。
+- AFTER：上一版 API `2026.07.17.1`，`index.php=53A15D40E711A91B80C1334E11EE4D358A737BBB785F86FC5C25069C217A3B5C`；不是当前 `.2`。
 - PHP 8.3.32、APCu `134217640` bytes、Windows PHP built-in 单 worker、同一 fixture/透明代理实例、临时 CA、输入、端口分配策略和五条代表路由；外部条件指纹两侧均为 `5A474508…03C6D`。
 - warmup=10、iterations=120、concurrency=10；BEFORE/AFTER 各 `5 × 120 = 600` 个 warm 样本，全部 HTTP 200、`contract_valid=true`，五路由均满足 p95/p99 样本门槛。
 - config、API、章节与 CDN 请求全部命中 loopback fixture；`fixed_loopback_proven=true`、`comparable=true`。
@@ -195,7 +201,7 @@ SHA-256：`47044F43CF37BF16E77F2B8C6DEA76A28FF0C74E348C6890FD80B0179CAB8B77`
 模式：`historical-common-denominator-v1`  
 生成时间：`2026-07-17T00:25:06.6814951Z`
 
-该报告绑定的测量 AFTER 是 `2026.07.13.2`，不是当前 `2026.07.17.1`。严格门禁：
+该报告绑定的测量 AFTER 是 `2026.07.13.2`，不是 `.1 / 53A15D40…A3B5C`，更不是当前 `.2`。严格门禁：
 
 - 恢复版 `index.php`：`A88271DCD759CDB4992FB2C49C963441FDA7028201E991211CD4DE4B497A13ED`；测量 AFTER：`680AF5970DD5EC8A85C2D6F75F66ECA439F91D1DBB3FF476406CB0096B18FB7C`。
 - 同一 fixture/代理进程、PID、启动时间、实例 nonce、临时 CA 和 API/fixture/proxy 端口；每阶段前后实时复核原进程仍存活。
@@ -307,7 +313,7 @@ warm 结果：
 
 1. 当前机器没有 Docker、Podman、nerdctl、containerd 或 `ctr` 命令/服务；`wsl.exe --status` exit 50。`Microsoft-Windows-Subsystem-Linux`、`VirtualMachinePlatform`、`Microsoft-Hyper-V-All`、`Containers`、`HypervisorPlatform` 五个可选组件全部为 Disabled。因此无法在本机执行 compose build、真实多 worker owner/loser、完整 Docker fault matrix 和 Docker runtime verifier；未经用户明确授权不能擅自启用系统组件、安装容器运行时或触发重启。
 2. 两项目没有 `.git`，bundled Git 对两个目录 `rev-parse` 均 exit 128；无法提供权威 diff 或 commit。pre-change 四文件改由原始会话中的成功补丁链逆向恢复，权威哈希记录位于会话日志时间 `2026-07-13T06:13:09.236Z`，恢复方法和哈希写入独立 manifest；这不等价于补造 Git 历史。
-3. 原始修改时间点没有预先运行 BEFORE，这一事实仍由 `performance-before.unavailable.json` 保留；当前源码百分比来自用户批准后新建的 `historical-common-denominator-v1` 透明 HTTPS harness，对权威恢复快照和当前 `53A15D40…A3B5C` 同条件重跑，不冒充原始时间点或严格同策略 schema 基线。`x-tunnel-smux` 继续保持只读且未使用。正式结果只覆盖确定性 loopback 单 worker 成功路径；Docker 10-worker 与真实公网仍需各自证据。
+3. 原始修改时间点没有预先运行 BEFORE，这一事实仍由 `performance-before.unavailable.json` 保留；`.1` 百分比来自用户批准后新建的 `historical-common-denominator-v1` 透明 HTTPS harness，对权威恢复快照和 `53A15D40…A3B5C` 同条件重跑，不冒充原始时间点、当前 `.2` 或严格同策略 schema 基线。`x-tunnel-smux` 继续保持只读且未使用。正式结果只覆盖确定性 loopback 单 worker 成功路径；Docker 10-worker 与真实公网仍需各自证据。
 4. 2026-07-17 以无代理、无 `JM_*` 环境变量的独立生产进程，对历史测量 AFTER（`index.php=680AF597…18FB7C`）A／恢复版 BEFORE／同一历史 AFTER B 做夹测：三者均 HTTP 502，耗时分别为 1149ms／6875ms／936ms；历史 AFTER 两次均为 5 attempts 且 deadline=0。另一次该历史 AFTER 的真实 latest 烟测为 1544ms、upstream 1493ms。故障均受预算约束，但外部上游可用性不是本仓库能修复的条件；这些结果不属于当前 `index.php=53A15D40…A3B5C`，不能替代当前源码的成功路径 A/B。
 5. 当前 APK 使用 Android Debug 证书。两个项目中 `.jks/.keystore/.p12/.pfx/.pem` 生产密钥文件数量为 0；`KEYSTORE_FILE`、`KEYSTORE_PASSWORD`、`KEY_ALIAS`、`KEY_PASSWORD`、`ANDROID_KEYSTORE`、`SIGNING_KEY` 六个常用进程变量均未设置。功能、v1/v2 签名和仓库指纹一致，但正式长期发布必须由用户提供稳定生产密钥并保持升级签名连续，不能由 AI 擅自替换既有发布身份。
 6. `apksigner` 提示 `META-INF/com/android/build/gradle/app-metadata.properties` 不受 v1 JAR 签名保护；v2 对整包提供保护。
@@ -321,17 +327,26 @@ Docker-capable 主机：
 ```powershell
 Set-Location D:\jm\jmcomic-api-main
 docker compose build --no-cache
-docker compose up -d --force-recreate
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime-verify.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\fault-injection-runtime.ps1
-docker compose -f docker-compose.yml -f docker-compose.test.yml logs --no-color jmcomic-api jm-upstream-fixture
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime-verify.ps1 -SkipBuild
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\fault-injection-runtime.ps1 `
+  -DockerLogPath .\performance-evidence\fault-injection-runtime-docker.log
+$log = Get-Item .\performance-evidence\fault-injection-runtime-docker.log -ErrorAction Stop
+Get-FileHash -Algorithm SHA256 -LiteralPath $log.FullName
+$health = Invoke-RestMethod 'http://127.0.0.1:8088/?health=1'
+if ($health.diagnostics.test_mode -ne $false) { throw 'Production compose was not restored after the fault matrix.' }
 ```
+
+`fault-injection-runtime.ps1` 会在 `finally` 中先保存测试 overlay 日志，再执行 combined `down -v --remove-orphans`，随后恢复 production compose 并等待 `health=1`，且以 `test_mode=false` 为完成门槛；因此不要在脚本返回后再向已删除的测试 overlay 请求日志。
 
 恢复源码位于 `D:\jm\jmcomic-api-main\performance-evidence\before-source-20260713T061309Z`。只有用它取得真实且同条件的 `performance-before.json` 后，才运行：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\performance-baseline.ps1 `
-  -RuntimeKind docker -ActualWorkerCount 10 `
+  -RuntimeKind docker -RuntimeSourceBinding docker-image `
+  -RuntimeImageDigest 'sha256:<本次镜像的64位SHA-256>' `
+  -ActualWorkerCount 10 `
+  -NetworkConditionId 'same-network-profile-v1' `
+  -ResourceProfileId 'cpu2-memory512m-apcu128m-v1' `
   -OutputPath .\performance-after.json -ComparePath .\performance-before.json
 ```
 
@@ -358,11 +373,11 @@ D:\jm\jmapi-extension\dist-local\
 - **pre-change 源码恢复：完成；四个权威 SHA-256 全部命中。**
 - **Docker 多 worker 验收：外部阻塞。**
 - **历史同条件运行态 BEFORE/AFTER：绑定 `A88271DC…7A13ED → 680AF597…18FB7C` 的旧证据保留。**
-- **当前源码性能 A/B：绑定 `A88271DC…7A13ED → 53A15D40…A3B5C` 的正式本机 loopback 单 worker结果已完成并独立重算；Docker 多 worker和真实公网不在该结论范围。**
+- **性能 A/B：绑定 `A88271DC…7A13ED → 53A15D40…A3B5C` 的 `.1` 结果已完成并独立重算；当前 `.2 / 7A2AC07A…70484` 不得冒充该结果。**
 - **生产签名：发布治理待用户提供稳定密钥。**
 
 除非代码、配置、APK 或外部条件发生变化，后续 AI 不应重做本报告已经有新鲜证据的本机工作。
 
 ## 10. 给后续 AI 的简短提示词
 
-> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先核对当前源码、v1.4.15 APK、当前哈希 A/B 证据和报告哈希；未变化时不得重做已有证据的本机测试、性能测量或 Suwayomi 回归。自主完成已具备条件的 Docker 多 worker/fault matrix 与交付更新；仅在用户提供稳定密钥后处理生产签名。失败必须定位根因、最小修复并做相关复测；不得改变固定筛选/API/章节/缓存契约，不得伪造 Git、BEFORE、签名或性能百分比。
+> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先部署并现场验证 API `2026.07.17.2 / 7A2AC07A…70484` 是否消除 Latest 502；不得把 `.1 / 53A15D40…A3B5C` 的 A/B 冒充为 `.2`。失败时读取同一 request-id 的服务端日志并最小修复；具备 Docker 后完成 runtime/fault matrix，严守筛选/API/章节/缓存安全契约，禁止伪造 Git、签名或性能百分比。

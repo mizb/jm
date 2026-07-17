@@ -1244,8 +1244,11 @@ if ($Area -in @('Verification', 'All')) {
     Assert-Matches $runtime 'Assert-True\s*\(\$attemptedDelta\s+-gt\s+0' 'runtime verifier requires default prefetch to attempt real background work'
     Assert-Matches $runtime 'Assert-True\s*\(\$prefetched\.Count\s+-gt\s+0' 'runtime verifier requires an observed prefetched HIT'
     Assert-Matches $runtime 'function\s+Get-OnDiskImageArtifacts[\s\S]*?/app[\s\S]*?/tmp[\s\S]*?(?:RIFF|89504e47|ffd8ff|47494638)' 'runtime verifier scans app and temp storage by image signature, not only filename extension'
-    Assert-Matches $faultRuntime 'exec[\s\S]*?-T[\s\S]*?jmcomic-api[\s\S]*?php[\s\S]*?/app/tests/upstream-policy-runtime\.php' 'Docker fault verification executes the exact connect, Retry-After, and negative-cache policy suite'
+    Assert-Matches $runtime "Invoke-DockerCompose\s+-Arguments\s+@\('build',\s*'--no-cache'\)" 'standalone runtime verifier performs the required clean image build'
+    Assert-Matches $faultRuntime 'exec[\s\S]*?-T[\s\S]*?jmcomic-api[\s\S]*?php\s+-d\s+apc\.enable_cli=1\s+/app/tests/upstream-policy-runtime\.php' 'Docker fault verification executes the policy suite with CLI APCu enabled'
     Assert-Contains $faultRuntime 'Upstream policy runtime checks passed.' 'Docker fault verification checks the policy-suite completion marker'
+    Assert-Matches $faultRuntime '\?health=1&test_run_id=\$runId[\s\S]*?refresh_suppressed_reason[\s\S]*?negative-cache' 'Docker fault verification observes the scoped domain negative cache'
+    Assert-Matches $faultRuntime '\$cdnObservedProperties[\s\S]*?/media/photos/\[\^\|\]\+[\s\S]*?cdn-502[\s\S]*?\$cdnObservedRequestCount\s+-eq\s+2' 'CDN failover counts every media request in the scenario and requires exactly two requests'
     Assert-Matches $faultRuntime "Count-Key\s+\`$counts\s+'api-good\|/latest\|0\|502-then-valid'\)\s+-eq\s+2" '502 integration verifies exactly two primary attempts'
     Assert-Matches $faultRuntime "Count-Key\s+\`$counts\s+'api-502\|/latest\|0\|502-then-valid'\)\s+-eq\s+1" '502 integration verifies exactly one secondary attempt'
     Assert-Matches $faultRuntime "Count-Key\s+\`$counts\s+'api-timeout\|/latest\|0\|502-then-valid'\)\s+-eq\s+0" '502 integration proves no third-domain attempt'
@@ -1257,6 +1260,8 @@ if ($Area -in @('Verification', 'All')) {
     Assert-Matches $faultRuntime 'cdnObservedKeys[\s\S]*?Count\s+-eq\s+2[\s\S]*?cdn-fail[\s\S]*?cdn-good' 'CDN integration rejects extra or non-allowlisted observed hosts'
     Assert-Matches $faultRuntime 'directClientIp[\s\S]*?effectiveIp\s+-eq\s+\$directClientIp' 'proxy spoof integration proves the untrusted result equals the direct REMOTE_ADDR control'
     Assert-Matches $faultRuntime "X-JM-Request-Id[\s\S]*?\^\[0-9a-f\]\{16\}\`$[\s\S]*?X-JM-Deadline-Exhausted[\s\S]*?\^\[01\]\`$" 'error diagnostics are validated by format and value domain'
+    Assert-Matches $faultRuntime 'finally\s*\{[\s\S]*?logs[\s\S]*?down[\s\S]*?-v[\s\S]*?--remove-orphans[\s\S]*?docker\s+compose[\s\S]*?up[\s\S]*?--force-recreate[\s\S]*?--remove-orphans[\s\S]*?test_mode[\s\S]*?-eq\s+\$false' 'Docker fault gate captures logs, removes the test overlay, restores production, and proves test mode is off'
+    Assert-Matches $faultRuntime "if\s*\(\`$SkipComposeUp\)[\s\S]*?partial verification[\s\S]*?else[\s\S]*?Fault-injection runtime verification passed" 'SkipComposeUp cannot emit the full fault-matrix success marker'
 }
 
 Write-Output "Performance policy contract passed for area: $Area"

@@ -26,7 +26,7 @@ docker compose up -d --build
 
 ```text
 ghcr.io/<你的GitHub用户名>/<仓库名>:latest
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.1
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.2
 ```
 
 如果要直接使用 GHCR 镜像，可以把 `docker-compose.yml` 中的 `build` 删除，并把 `image` 改成你的镜像名：
@@ -39,9 +39,9 @@ services:
     ports:
       - "8088:8088"
     environment:
-      JM_API_VERSION: "2026.07.17.1"
+      JM_API_VERSION: "2026.07.17.2"
       JM_REQUEST_BUDGET_MS: "12000"
-      JM_MAX_UPSTREAM_ATTEMPTS: "6"
+      JM_MAX_UPSTREAM_ATTEMPTS: "10"
       JM_LIST_CACHE_TTL: "60"
       JM_SEARCH_CACHE_TTL: "30"
       JM_WEEKLY_LIST_CACHE_TTL: "60"
@@ -106,7 +106,7 @@ docker image inspect ghcr.io/<你的GitHub用户名>/<仓库名>:latest --format
 如果想完全避免 `latest` 缓存误判，可以把 compose 里的镜像固定为：
 
 ```text
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.1
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.2
 ```
 
 启动后检查服务：
@@ -129,7 +129,7 @@ docker logs jmcomic-api
 看到类似下面这行，就能判断容器加载的是哪一版：
 
 ```text
-JM API version 2026.07.17.1
+JM API version 2026.07.17.2
 ```
 
 `health=1` 会返回顶层 `version` 和 `diagnostics.app_version`。所有响应也会带 `X-JM-API-Version` 头，所以直接 `php -S` 和 Docker 启动都能通过接口确认当前运行版本。
@@ -382,9 +382,9 @@ GET /?jmid=350234&chapter=413446
 {
   "code": 200,
   "success": true,
-  "version": "2026.07.17.1",
+  "version": "2026.07.17.2",
   "diagnostics": {
-    "app_version": "2026.07.17.1",
+    "app_version": "2026.07.17.2",
     "php": "8.5.7",
     "apcu": true,
     "apcu_details": {
@@ -502,7 +502,7 @@ Redis 不可用时优雅降级 — 不限流。
 ```
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
-X-JM-API-Version: 2026.07.17.1
+X-JM-API-Version: 2026.07.17.2
 X-JM-Cache: HIT|MISS
 X-JM-Image-Codec: webp|jpeg|gif|png|original
 X-JM-Singleflight: hit|owner|hit-after-wait|timeout|disabled
@@ -557,7 +557,7 @@ API 域名请求路径只读取 APCu 中的 fresh/stale 条目或内置 HTTPS fa
 | 变量 | 默认值 | `0` / 空值语义与风险 |
 |---|---:|---|
 | `JM_REQUEST_BUDGET_MS` | `12000` | 不接受 0；单个业务请求共享的上游总预算 |
-| `JM_MAX_UPSTREAM_ATTEMPTS` | `6` | 不接受 0；同一业务请求的总上游尝试上限 |
+| `JM_MAX_UPSTREAM_ATTEMPTS` | `10` | 不接受 0；同一业务请求最多对五个域名进行两轮快速尝试，仍受 12 秒总预算约束 |
 | `JM_LIST_CACHE_TTL` | `60` | `0` 关闭 latest/popular/promote 源页缓存，上游调用会增加 |
 | `JM_SEARCH_CACHE_TTL` | `30` | `0` 关闭搜索源页缓存 |
 | `JM_WEEKLY_LIST_CACHE_TTL` | `60` | `0` 关闭 weekly filter 源页缓存 |
@@ -623,8 +623,7 @@ curl.exe "http://127.0.0.1:8088/?health=1"
 
 ```powershell
 docker compose build --no-cache
-docker compose up -d --force-recreate
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime-verify.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime-verify.ps1 -SkipBuild
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\performance-baseline.ps1 `
   -RuntimeKind docker -RuntimeSourceBinding docker-image `
   -RuntimeImageDigest 'sha256:<本次镜像的64位SHA-256>' `

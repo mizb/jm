@@ -20,20 +20,20 @@
 
 ## 当前检查点
 
-- API：`2026.07.17.1`。
+- API：`2026.07.17.2`。
 - APK 交付版本：`1.4.15 / versionCode 15`；`1.4.14 / 14` 的反代子路径页面 URL 缺陷仅作为历史 RED 基线。
-- 当前 API `index.php` SHA-256：`53A15D40E711A91B80C1334E11EE4D358A737BBB785F86FC5C25069C217A3B5C`；v1.4.15 APK SHA-256：`A1FD20677F53784CEAED728BCFC0A44E40DD53D35C47A582E1A3195D51B57872`。
+- 当前 API `index.php` SHA-256：`7A2AC07AE89CA4EE0ADB4F4B8435C8038CE656769295FD48B8126F01CD870484`；v1.4.15 APK SHA-256：`A1FD20677F53784CEAED728BCFC0A44E40DD53D35C47A582E1A3195D51B57872`。
 - 本机代码、聚焦静态/运行时测试、Keiyoushi 构建、元数据和 Suwayomi 2.3.2243 真实回归已经完成。
-- 当前源码严格同条件性能 A/B 已完成：恢复版 `A88271DC…7A13ED` 对当前 `53A15D40…A3B5C`，正式证据 SHA-256 为 `6ECB423EFE3A2B66B196B1AEC9D15D96CA8F1DB0732ABD01181A24F5CDB2F9B5`。
-- 当前剩余项只包括 Docker-capable 主机上的真实多 worker 验收；用户提供稳定生产密钥后的正式签名属于发布治理待办，不是原实施计划的代码完成门槛。
-- 历史透明 HTTPS A/B 仅绑定恢复版 `A88271DC…7A13ED` 与历史 AFTER `680AF597…18FB7C / 2026.07.13.2`；当前 A/B 另行绑定恢复版与 `53A15D40…A3B5C / 2026.07.17.1`，两份证据不得混用。
+- 正式同条件性能 A/B 只绑定恢复版 `A88271DC…7A13ED` 与上一版 `.1 / 53A15D40…A3B5C`；证据 SHA-256 为 `6ECB423EFE3A2B66B196B1AEC9D15D96CA8F1DB0732ABD01181A24F5CDB2F9B5`，不得冒充当前 `.2`。
+- `.2` 已针对现场 Latest 502 增加五域最多两轮、默认 10 次的瞬态网络恢复，仍受 12 秒总预算限制；优先部署并核对 `X-JM-API-Version: 2026.07.17.2` 与现场结果。
+- 历史透明 HTTPS A/B 绑定恢复版 `A88271DC…7A13ED` 与历史 AFTER `680AF597…18FB7C / 2026.07.13.2`；后一份 A/B 绑定恢复版与 `.1 / 53A15D40…A3B5C`。两份证据都不代表当前 `.2`，不得混用。
 - 两项目没有 Git 元数据；原始修改时间点没有预先测量 BEFORE。不得伪造 diff、commit、基线或提升百分比。
 
 开始时先比较最终报告所列源码与产物哈希：
 
-- 哈希未变化：不要重做已完成的本机实现或 Suwayomi 回归，直接检查外部条件是否已具备。
+- 哈希未变化：不要重做 APK、Suwayomi 或 `.1` A/B；优先完成 `.2` 现场 502 复验和 Docker 外部验收。
 - 哈希发生变化：调查变化来源，保留用户改动，按影响范围重新执行合同、运行时、构建和回归，并更新最终报告。
-- Docker、历史 BEFORE 或生产密钥仍不可用：完成其他所有可执行工作后，保留精确错误证据和可复制命令；不要以猜测代替结果。
+- Docker 或生产密钥仍不可用：完成其他所有可执行工作后，保留精确错误证据和可复制命令；不要以猜测代替结果。
 - Suwayomi 与 API 若位于不同容器，扩展中的 `127.0.0.1` 指向 Suwayomi 容器自身；必须使用该容器可访问的 API 服务名、平台支持时的 `host.docker.internal` 或局域网地址。
 
 ## 不可偏离契约
@@ -76,4 +76,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\fault-injection-runt
 
 ## 简短启动提示词
 
-> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先核对当前源码、v1.4.15 APK、bug 审计和最终报告哈希；未变化时不要重做已有证据的工作，自主完成所有已具备条件的外部验收并更新报告。失败必须根因诊断、最小修复和相关复测；严守固定筛选/API/章节/页面 URL/缓存安全契约，禁止伪造 Git、BEFORE、签名或性能百分比，持续到所有可执行项完整交付。
+> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先部署并验证 API `2026.07.17.2 / 7A2AC07A…70484` 的 Latest 502 修复；不要重做未变化的 APK/Suwayomi，也不得把 `.1` A/B 冒充 `.2`。失败时按 request-id 诊断并最小修复；随后自主完成具备条件的 Docker 验收，严守固定筛选/API/章节/页面 URL/缓存安全契约。

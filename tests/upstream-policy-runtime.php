@@ -90,6 +90,8 @@ function context(int $budgetMs = 1500, int $attempts = 6): RequestContext
     return RequestContext::forTest('policy-test', $budgetMs, $attempts);
 }
 
+assertSameValue(10, JmConfig::DEFAULT_MAX_UPSTREAM_ATTEMPTS, 'production default permits two bounded domain passes');
+
 function transientRequestId(): string
 {
     $context = RequestContext::forTest('request-id-test', 1500, 1);
@@ -139,6 +141,76 @@ assertNetworkFailover(CURLE_COULDNT_RESOLVE_HOST, 'dns');
 assertNetworkFailover(CURLE_SSL_CONNECT_ERROR, 'tls');
 assertNetworkFailover(CURLE_OPERATION_TIMEDOUT, 'timeout');
 assertNetworkFailover(999, 'network');
+
+$allDomainsTransientThenPrimaryRecovers = new SequenceTransport(
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'primary transient TLS failure'),
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'secondary transient TLS failure'),
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'third transient TLS failure'),
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'fourth transient TLS failure'),
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'fifth transient TLS failure'),
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(true, encryptedTestEnvelope(['recovered' => true], $headers), 200),
+);
+$ctx = context(1500, 6);
+$client = JmApiClient::forTest(
+    $ctx,
+    $allDomainsTransientThenPrimaryRecovers,
+    ['https://primary.test', 'https://secondary.test', 'https://one.test', 'https://two.test', 'https://three.test'],
+);
+assertSameValue(
+    ['recovered' => true],
+    $client->callJson('/latest', ['page' => '0'])['data'],
+    'all-domain transient failures use the sixth bounded attempt to retry the best domain',
+);
+assertSameValue(6, $allDomainsTransientThenPrimaryRecovers->calls, 'bounded all-domain recovery attempt count');
+$allDomainRecoveryHosts = array_map(
+    static fn(string $url): string => (string) parse_url($url, PHP_URL_HOST),
+    $allDomainsTransientThenPrimaryRecovers->seenUrls,
+);
+assertSameValue(
+    ['primary.test', 'secondary.test', 'one.test', 'two.test', 'three.test', 'primary.test'],
+    $allDomainRecoveryHosts,
+    'network failures rotate through every domain before retrying the best domain',
+);
+
+$twoBoundedDomainPassesThenRecover = new SequenceTransport(
+    ...array_merge(
+        array_fill(0, 9, fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'transient TLS failure')),
+        [fn(string $url, array $headers, int $timeoutMs): HttpResult => result(true, encryptedTestEnvelope(['second_pass' => true], $headers), 200)],
+    ),
+);
+$ctx = context(1500, 10);
+$client = JmApiClient::forTest(
+    $ctx,
+    $twoBoundedDomainPassesThenRecover,
+    ['https://primary.test', 'https://secondary.test', 'https://one.test', 'https://two.test', 'https://three.test'],
+);
+assertSameValue(
+    ['second_pass' => true],
+    $client->callJson('/latest', ['page' => '0'])['data'],
+    'transient failures may use a second domain pass without exceeding ten attempts',
+);
+assertSameValue(10, $twoBoundedDomainPassesThenRecover->calls, 'two-pass recovery remains bounded to ten attempts');
+
+$allScrambleDomainsTransientThenPrimaryRecovers = new SequenceTransport(
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'primary transient TLS failure'),
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'secondary transient TLS failure'),
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'third transient TLS failure'),
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'fourth transient TLS failure'),
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'fifth transient TLS failure'),
+    fn(string $url, array $headers, int $timeoutMs): HttpResult => result(true, '<script>var scramble_id = 220981;</script>', 200),
+);
+$ctx = context(1500, 6);
+$client = JmApiClient::forTest(
+    $ctx,
+    $allScrambleDomainsTransientThenPrimaryRecovers,
+    ['https://primary.test', 'https://secondary.test', 'https://one.test', 'https://two.test', 'https://three.test'],
+);
+assertSameValue(
+    '220981',
+    $client->fetchScrambleId('350234'),
+    'scramble uses the sixth bounded attempt after every domain has one transient failure',
+);
+assertSameValue(6, $allScrambleDomainsTransientThenPrimaryRecovers->calls, 'bounded scramble recovery attempt count');
 
 $retry502 = new SequenceTransport(
     fn(string $url, array $headers, int $timeoutMs): HttpResult => result(true, 'bad gateway', 502),
