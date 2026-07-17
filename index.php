@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.17.5';
+    public const APP_VERSION    = '2026.07.17.7';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -230,10 +230,11 @@ final class UpstreamBudgetExhaustedException extends JmException
 {
     public const REASON_ATTEMPTS = 'attempts';
     public const REASON_WALL = 'wall';
+    public const REASON_BYTES = 'bytes';
 
     public function __construct(private string $reason)
     {
-        if (!in_array($reason, [self::REASON_ATTEMPTS, self::REASON_WALL], true)) {
+        if (!in_array($reason, [self::REASON_ATTEMPTS, self::REASON_WALL, self::REASON_BYTES], true)) {
             throw new \InvalidArgumentException('Invalid upstream budget exhaustion reason');
         }
         parent::__construct('Upstream request budget exhausted: ' . $reason, 502);
@@ -243,7 +244,11 @@ final class UpstreamBudgetExhaustedException extends JmException
 
     public function prefetchSkipReason(): string
     {
-        return $this->reason === self::REASON_ATTEMPTS ? 'budget-attempts' : 'budget-wall';
+        return match ($this->reason) {
+            self::REASON_ATTEMPTS => 'budget-attempts',
+            self::REASON_WALL => 'budget-wall',
+            self::REASON_BYTES => 'budget-bytes',
+        };
     }
 }
 
@@ -1577,9 +1582,14 @@ final class PrefetchCoordinator
                     }
                     $this->emitOwnership('page-owner-renew', $claim['candidate']);
 
+                    $remainingBytes = max(0, $byteBudget - $stats['bytes']);
                     $stats['attempted']++;
                     try {
-                        $result = ($this->executor)($claim['candidate'], max(0, $wallBudgetMs - $elapsedMs));
+                        $result = ($this->executor)(
+                            $claim['candidate'],
+                            max(0, $wallBudgetMs - $elapsedMs),
+                            $remainingBytes,
+                        );
                     } catch (UpstreamBudgetExhaustedException $error) {
                         $stats['skip_reason'] = $error->prefetchSkipReason();
                         break;
@@ -2244,6 +2254,12 @@ final class PayloadNormalizer
         return $default;
     }
 
+    public static function identifierString(mixed $value, string $default = ''): string
+    {
+        if (is_string($value) || is_int($value)) return (string) $value;
+        return $default;
+    }
+
     public static function scalarInt(mixed $value, int $default = 0): int
     {
         if (is_int($value)) return $value;
@@ -2663,10 +2679,18 @@ final class JmApiClient
         return (string) JmConfig::SCRAMBLE_220980;
     }
 
-    public function downloadImage(string $url): string
+    public function downloadImage(string $url, ?int $downloadByteLimit = null): string
     {
         $candidateUrls = $this->imageRequestUrls($url);
-        $bodyLimitBytes = self::imageMaxCompressedBytes();
+        if ($downloadByteLimit !== null && $downloadByteLimit <= 0) {
+            throw new UpstreamBudgetExhaustedException(UpstreamBudgetExhaustedException::REASON_BYTES);
+        }
+        $configuredBodyLimitBytes = self::imageMaxCompressedBytes();
+        $prefetchByteLimitIsBinding = $downloadByteLimit !== null
+            && $downloadByteLimit <= $configuredBodyLimitBytes;
+        $bodyLimitBytes = $downloadByteLimit === null
+            ? $configuredBodyLimitBytes
+            : min($configuredBodyLimitBytes, $downloadByteLimit);
         $headers = array_merge([
             'Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
             'User-Agent: ' . JmConfig::UA,
@@ -2690,6 +2714,9 @@ final class JmApiClient
             if ($result->bodyLimitExceeded) {
                 $lastFailure = ApiFailure::payloadShape('Image compressed body limit exceeded');
                 $this->recordApiFailure($lastFailure, $baseUrl, '/media/photos', 0, $result->status);
+                if ($prefetchByteLimitIsBinding) {
+                    throw new UpstreamBudgetExhaustedException(UpstreamBudgetExhaustedException::REASON_BYTES);
+                }
                 break;
             }
 
@@ -3196,7 +3223,7 @@ final class JmAlbum
     public static function fromApiResponse(array $data, string $fallbackAlbumId = ''): self
     {
         $self = new self();
-        $self->id          = PayloadNormalizer::scalarString($data['id'] ?? $fallbackAlbumId);
+        $self->id          = PayloadNormalizer::identifierString($data['id'] ?? $fallbackAlbumId);
         $self->name        = PayloadNormalizer::scalarString($data['name'] ?? '');
         $self->author      = PayloadNormalizer::stringList($data['author'] ?? []);
         $self->description = PayloadNormalizer::scalarString($data['description'] ?? '');
@@ -3212,7 +3239,7 @@ final class JmAlbum
         $episodes = [];
         foreach (PayloadNormalizer::listArray($data['series'] ?? []) as $sourceIndex => $ch) {
             if (!is_array($ch)) continue;
-            $photoId = PayloadNormalizer::scalarString($ch['id'] ?? '');
+            $photoId = PayloadNormalizer::identifierString($ch['id'] ?? '');
             if ($photoId === '') continue;
             $episodes[] = [
                 'photo_id' => $photoId,
@@ -3363,7 +3390,7 @@ final class JmChapter
             if (!is_array($ch) || array_is_list($ch)) {
                 throw new MalformedChapterException('Malformed chapter series item', 502);
             }
-            if (PayloadNormalizer::scalarString($ch['id'] ?? '') === $self->photoId) {
+            if (PayloadNormalizer::identifierString($ch['id'] ?? '') === $self->photoId) {
                 $sort = PayloadNormalizer::scalarString($ch['sort'] ?? '1', '1');
                 break;
             }
@@ -3534,7 +3561,7 @@ final class JmListItem
     public static function fromPayload(array $item): self
     {
         $self = new self();
-        $self->id          = PayloadNormalizer::scalarString($item['id'] ?? $item['aid'] ?? $item['AID'] ?? '');
+        $self->id          = PayloadNormalizer::identifierString($item['id'] ?? $item['aid'] ?? $item['AID'] ?? '');
         $name              = PayloadNormalizer::scalarString($item['name'] ?? '');
         $self->name        = InputValidator::sanitizeString($name !== '' ? $name : 'JM ' . $self->id);
         $self->author      = InputValidator::sanitizeString(PayloadNormalizer::scalarString($item['author'] ?? ''));
@@ -4710,7 +4737,7 @@ final class JmService
         }
 
         $rawId = $payload['id'] ?? null;
-        $id = $rawId === null ? $expectedAlbumId : trim(PayloadNormalizer::scalarString($rawId));
+        $id = $rawId === null ? $expectedAlbumId : trim(PayloadNormalizer::identifierString($rawId));
         if ($id === '' || !hash_equals($expectedAlbumId, $id)) {
             throw new JmException('Invalid upstream album id', 502);
         }
@@ -4726,7 +4753,7 @@ final class JmService
             if (!is_array($chapter) || array_is_list($chapter)) {
                 throw new JmException('Invalid upstream album series item', 502);
             }
-            $photoId = trim(PayloadNormalizer::scalarString($chapter['id'] ?? ''));
+            $photoId = trim(PayloadNormalizer::identifierString($chapter['id'] ?? ''));
             if (preg_match('/^\d{1,20}$/', $photoId) !== 1) {
                 throw new JmException('Invalid upstream album series id', 502);
             }
@@ -4816,7 +4843,7 @@ final class JmService
             throw new JmException('Invalid upstream list item', 502);
         }
 
-        $id = trim(PayloadNormalizer::scalarString($item['id'] ?? $item['aid'] ?? $item['AID'] ?? ''));
+        $id = trim(PayloadNormalizer::identifierString($item['id'] ?? $item['aid'] ?? $item['AID'] ?? ''));
         if (preg_match('/^\d{1,20}$/', $id) !== 1) {
             throw new JmException('Invalid upstream list item id', 502);
         }
@@ -4864,7 +4891,11 @@ final class JmService
         if (!is_array($payload)) {
             throw new JmException('Invalid upstream paged list payload', 502);
         }
-        $redirectAid = $allowRedirect ? trim(PayloadNormalizer::scalarString($payload['redirect_aid'] ?? '')) : '';
+        $rawRedirectAid = $payload['redirect_aid'] ?? null;
+        if ($allowRedirect && $rawRedirectAid !== null && !is_string($rawRedirectAid) && !is_int($rawRedirectAid)) {
+            throw new JmException('Invalid upstream search redirect id', 502);
+        }
+        $redirectAid = $allowRedirect ? trim(PayloadNormalizer::identifierString($rawRedirectAid ?? '')) : '';
         if ($redirectAid !== '' && preg_match('/^\d{1,20}$/', $redirectAid) !== 1) {
             throw new JmException('Invalid upstream search redirect id', 502);
         }
@@ -4873,14 +4904,36 @@ final class JmService
         }
         $items = self::normalizeListItemsPayload($payload[$itemsKey] ?? []);
         $totalRaw = $payload['total'] ?? ($redirectAid !== '' ? 1 : null);
-        if (!(is_int($totalRaw) || is_float($totalRaw) || (is_string($totalRaw) && preg_match('/^\d+$/', trim($totalRaw)) === 1))) {
-            throw new JmException('Invalid upstream list total', 502);
-        }
-        $normalized = [$itemsKey => $items, 'total' => max(0, (int) $totalRaw)];
+        $normalized = [$itemsKey => $items, 'total' => self::normalizeListTotal($totalRaw)];
         if ($allowRedirect) {
             $normalized['redirect_aid'] = $redirectAid;
         }
         return $normalized;
+    }
+
+    private static function normalizeListTotal(mixed $value): int
+    {
+        if (is_int($value)) {
+            if ($value >= 0) return $value;
+            throw new JmException('Invalid upstream list total', 502);
+        }
+        if (!is_string($value)) {
+            throw new JmException('Invalid upstream list total', 502);
+        }
+
+        $raw = trim($value);
+        if (preg_match('/^\d+$/', $raw) !== 1) {
+            throw new JmException('Invalid upstream list total', 502);
+        }
+        $canonical = ltrim($raw, '0');
+        if ($canonical === '') return 0;
+        $maximum = (string) PHP_INT_MAX;
+        if (strlen($canonical) > strlen($maximum)
+            || (strlen($canonical) === strlen($maximum) && strcmp($canonical, $maximum) > 0)
+        ) {
+            throw new JmException('Invalid upstream list total', 502);
+        }
+        return (int) $canonical;
     }
 
     private static function normalizePromoteHomePayload(mixed $payload): array
@@ -5129,7 +5182,7 @@ final class JmService
         $categoryId = '';
         foreach ($categories as $category) {
             if (!is_array($category) || array_is_list($category)) continue;
-            $candidateId = trim(PayloadNormalizer::scalarString($category['id'] ?? ''));
+            $candidateId = trim(PayloadNormalizer::identifierString($category['id'] ?? ''));
             if (preg_match('/^\d{1,20}$/', $candidateId) === 1) {
                 $categoryId = $candidateId;
                 break;
@@ -5139,7 +5192,7 @@ final class JmService
         $typeId = '';
         foreach ($types as $type) {
             if (!is_array($type) || array_is_list($type)) continue;
-            $candidateId = trim(PayloadNormalizer::scalarString($type['id'] ?? ''));
+            $candidateId = trim(PayloadNormalizer::identifierString($type['id'] ?? ''));
             if (self::isValidWeeklyTypeId($candidateId)) {
                 $typeId = $candidateId;
                 break;
@@ -5422,7 +5475,7 @@ final class JmService
     }
 
     /** @return array{bytes:string, mime:string, codec:string, cache_hit:bool, singleflight:string, cache_store:string, apcu_free:?int, upstream_bytes:int, prefetch_manifest:array} */
-    public function fetchDecodedPage(string $photoId, int $page): array
+    public function fetchDecodedPage(string $photoId, int $page, ?int $maxUpstreamBytes = null): array
     {
         $manifest = $this->fetchReaderManifest($photoId);
         $image = $manifest['images'][$page - 1] ?? null;
@@ -5437,7 +5490,10 @@ final class JmService
             return $cached + ['singleflight' => 'hit', 'prefetch_manifest' => $manifest];
         }
 
-        $result = $this->singleFlight($cacheKey, fn(): array => $this->materializeDecodedPage($cacheKey, $image));
+        $result = $this->singleFlight(
+            $cacheKey,
+            fn(): array => $this->materializeDecodedPage($cacheKey, $image, $maxUpstreamBytes),
+        );
         $result['prefetch_manifest'] = $manifest;
         return $result;
     }
@@ -5485,13 +5541,14 @@ final class JmService
             $this->cache,
             static fn(): int => hrtime(true),
             static function (callable $callback): void { register_shutdown_function($callback); },
-            function (array $candidate, int $remainingMs): array {
+            function (array $candidate, int $remainingMs, int $remainingBytes): array {
                 return $this->context->withPrefetchScope(
                     fn(): array => $this->context->budget()->withSecondaryCap(
                         $remainingMs,
                         fn(): array => $this->fetchDecodedPage(
                             (string) $candidate['photo_id'],
                             (int) $candidate['page'],
+                            $remainingBytes,
                         ),
                     ),
                 );
@@ -5754,10 +5811,10 @@ final class JmService
         $this->cache->increment($namespace . 'diagnostics:prefetch:events:v1', $ttl);
     }
 
-    private function materializeDecodedPage(string $cacheKey, array $image): array
+    private function materializeDecodedPage(string $cacheKey, array $image, ?int $maxUpstreamBytes = null): array
     {
         $segments = (int) ($image['decode_segments'] ?? 0);
-        $raw = $this->api->downloadImage((string) ($image['media_path'] ?? ''));
+        $raw = $this->api->downloadImage((string) ($image['media_path'] ?? ''), $maxUpstreamBytes);
         try {
             $decoded = $this->imageDecoder->decode(
                 $raw,

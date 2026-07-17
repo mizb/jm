@@ -86,7 +86,7 @@
 
 - 每个业务请求有总预算，默认 `JM_REQUEST_BUDGET_MS=12000`。
 - 预算在路由入口创建一次，并由同一个 `RequestContext` 传给 `JmService`、`JmApiClient` 以及该路由内的所有 `callJson()`/`fetchScrambleId()`；weekly、promote 聚合和批量章节不得为每次上游调用重新获得完整预算。
-- 每个上游调用有总尝试上限；在已知可用老版对照证明快速双轮仍不足后，`2026.07.17.5` 保持 `JM_MAX_UPSTREAM_ATTEMPTS=15`、每域最多三次并带 300ms 生产重试间隔；12 秒 wall budget 仍是硬上限。weekly category ID 保持纯数字，真实 type ID 兼容 `hanman/another/manga` 一类安全 slug；章节响应 ID 兼容 JSON string/integer，规范化后仍必须与请求 ID 完全一致。
+- 每个上游调用有总尝试上限；在已知可用老版对照证明快速双轮仍不足后，`2026.07.17.7` 保持 `JM_MAX_UPSTREAM_ATTEMPTS=15`、每域最多三次并带 300ms 生产重试间隔；12 秒 wall budget 仍是硬上限。weekly category ID 保持纯数字，真实 type ID 兼容 `hanman/another/manga` 一类安全 slug；章节、album、series、列表、搜索跳转和 weekly ID 兼容 JSON string/integer，角色校验前拒绝 bool/float/array，章节响应 ID 规范化后仍必须与请求 ID 完全一致；列表总数只接受可表示的非负整数，预取剩余 byte budget 必须进入单图 HTTP body collector。
 - DNS、连接、TLS、timeout 及可重试 HTTP 状态按健康排序后的域名逐个处理；每域最多三次，生产重试间隔 300ms，随后才切到下一域。全部尝试始终同时受 15 次 attempt 与 12 秒 wall budget 限制。
 - 所有域使用同一有界策略，不因首选/备用身份改变上限；JSON、解密、payload shape 和业务错误仍立即结束。
 - 每次尝试重新生成时间戳/token。

@@ -453,11 +453,77 @@ $realWeekDefaults = ['category_id' => '249', 'type_id' => 'hanman'];
 assertSameValue(
     $realWeekDefaults,
     $weekDefaultsNormalizer->invoke(null, [
-        'categories' => [['id' => '249', 'title' => 'category']],
+        'categories' => [['id' => 249, 'title' => 'category']],
         'type' => [['id' => 'hanman', 'title' => 'type']],
     ]),
-    'real upstream alphanumeric weekly type id is accepted',
+    'real upstream integer category and alphanumeric weekly type ids are accepted',
 );
+$albumNormalizer = new ReflectionMethod(JmService::class, 'normalizeAlbumPayload');
+$albumNormalizer->setAccessible(true);
+assertSameValue(
+    ['id' => '350234', 'name' => 'Fixture', 'author' => [], 'description' => '', 'image' => '',
+        'total_views' => '0', 'likes' => '0', 'comment_total' => '0', 'tags' => [], 'works' => [],
+        'actors' => [], 'related_list' => [], 'series' => [['id' => '350235', 'name' => '', 'sort' => '1']]],
+    $albumNormalizer->invoke(null, [
+        'id' => 350234,
+        'name' => 'Fixture',
+        'series' => [['id' => 350235]],
+    ], '350234'),
+    'integer album and series ids are normalized as canonical strings',
+);
+$listItemNormalizer = new ReflectionMethod(JmService::class, 'normalizeListItemPayload');
+$listItemNormalizer->setAccessible(true);
+assertSameValue(
+    '350234',
+    $listItemNormalizer->invoke(null, ['id' => 350234, 'name' => 'Fixture'])['id'],
+    'integer list item id is normalized as a canonical string',
+);
+$pagedListNormalizer = new ReflectionMethod(JmService::class, 'normalizePagedListPayload');
+$pagedListNormalizer->setAccessible(true);
+assertSameValue(
+    '350234',
+    $pagedListNormalizer->invoke(null, ['content' => [], 'total' => 1, 'redirect_aid' => 350234], 'content', true)['redirect_aid'],
+    'integer search redirect id is normalized as a canonical string',
+);
+assertSameValue(
+    PHP_INT_MAX,
+    $pagedListNormalizer->invoke(null, ['content' => [], 'total' => (string) PHP_INT_MAX], 'content')['total'],
+    'largest representable non-negative list total remains valid',
+);
+foreach ([1.0, 1.9, -1, '-1', NAN, INF, (string) PHP_INT_MAX . '0'] as $invalidTotal) {
+    assertThrows(
+        fn() => $pagedListNormalizer->invoke(null, ['content' => [], 'total' => $invalidTotal], 'content'),
+        'list total rejects fractions, negatives, non-finite numbers, and integer overflow',
+    );
+}
+foreach ([true, 1.0] as $invalidId) {
+    assertThrows(
+        fn() => $albumNormalizer->invoke(null, ['id' => $invalidId, 'name' => 'Fixture'], '1'),
+        'boolean and float album ids are rejected',
+    );
+    assertThrows(
+        fn() => $listItemNormalizer->invoke(null, ['id' => $invalidId, 'name' => 'Fixture']),
+        'boolean and float list item ids are rejected',
+    );
+    assertThrows(
+        fn() => $pagedListNormalizer->invoke(null, ['content' => [], 'total' => 1, 'redirect_aid' => $invalidId], 'content', true),
+        'boolean and float search redirect ids are rejected',
+    );
+    assertThrows(
+        fn() => $weekDefaultsNormalizer->invoke(null, [
+            'categories' => [['id' => $invalidId]],
+            'type' => [['id' => 'hanman']],
+        ]),
+        'boolean and float weekly category ids are rejected',
+    );
+    assertThrows(
+        fn() => $weekDefaultsNormalizer->invoke(null, [
+            'categories' => [['id' => 249]],
+            'type' => [['id' => $invalidId]],
+        ]),
+        'boolean and float weekly type ids are rejected',
+    );
+}
 $weekEntryValidator = new ReflectionMethod(JmService::class, 'validatedWeekDefaultsEntry');
 $weekEntryValidator->setAccessible(true);
 $realWeekEntry = [

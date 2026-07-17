@@ -761,11 +761,18 @@ assertPrefetchSame('budget-wall', $wallEvents[0]['skip_reason'] ?? null, 'wall e
 $byteCache = new FakePrefetchCache();
 $byteCallbacks = [];
 $byteEvents = [];
+$byteLimits = [];
 $byteCoordinator = new PrefetchCoordinator(
     $byteCache,
     static fn(): int => 0,
     static function (callable $callback) use (&$byteCallbacks): void { $byteCallbacks[] = $callback; },
-    static fn(array $candidate, int $remainingMs): array => ['cache_hit' => false, 'cache_store' => 'stored', 'upstream_bytes' => 100],
+    static function (array $candidate, int $remainingMs, int $remainingBytes) use (&$byteLimits): array {
+        $byteLimits[] = $remainingBytes;
+        if (101 > $remainingBytes) {
+            throw new UpstreamBudgetExhaustedException(UpstreamBudgetExhaustedException::REASON_BYTES);
+        }
+        return ['cache_hit' => false, 'cache_store' => 'stored', 'upstream_bytes' => 101];
+    },
     static function (array $stats) use (&$byteEvents): void { $byteEvents[] = $stats; },
     static fn(): bool => true,
     static fn(): int => 501,
@@ -775,9 +782,10 @@ $byteCoordinator->schedule(
     static fn(): array => [prefetchCandidate('12', 2), prefetchCandidate('12', 3)],
 );
 ($byteCallbacks[0])();
-assertPrefetchSame(1, $byteEvents[0]['attempted'] ?? null, 'byte budget is checked between every page');
-assertPrefetchSame(100, $byteEvents[0]['bytes'] ?? null, 'byte accounting uses actual upstream input bytes');
-assertPrefetchSame('budget-bytes', $byteEvents[0]['skip_reason'] ?? null, 'byte exhaustion has a fixed reason');
+assertPrefetchSame(1, $byteEvents[0]['attempted'] ?? null, 'byte budget reaches the first page executor');
+assertPrefetchSame([100], $byteLimits, 'executor receives the remaining byte budget before downloading');
+assertPrefetchSame(0, $byteEvents[0]['bytes'] ?? null, 'over-budget input is aborted before bytes are accepted');
+assertPrefetchSame('budget-bytes', $byteEvents[0]['skip_reason'] ?? null, 'in-page byte exhaustion has a fixed reason');
 
 $waterlineCache = new FakePrefetchCache();
 $waterlineCallbacks = [];

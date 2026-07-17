@@ -153,7 +153,7 @@ if ((Test-Area 'CacheList') -or $Area -eq 'Cache') {
     $listItemsContract = '(?s)^\s*private\s+static\s+function\s+normalizeListItemsPayload\s*\(\s*mixed\s+\$payload\s*\)\s*:\s*array\s*\{\s*if\s*\(\s*!is_array\(\$payload\)\s*\|\|\s*!array_is_list\(\$payload\)\s*\)\s*\{\s*throw\s+new\s+JmException\(''Invalid upstream list payload'',\s*502\)\s*;\s*\}\s*\$normalized\s*=\s*\[\s*\]\s*;\s*foreach\s*\(\s*\$payload\s+as\s+\$item\s*\)\s*\{\s*\$normalized\[\]\s*=\s*self::normalizeListItemPayload\(\$item\)\s*;\s*\}\s*return\s+\$normalized\s*;\s*\}\s*$'
     Assert-Matches $listItemsNormalizer $listItemsContract 'list payload normalizer requires a true list and maps a valid empty list to an empty list'
     Assert-Matches $listItemNormalizer 'if\s*\(\s*!is_array\(\$item\)\s*\|\|\s*array_is_list\(\$item\)\s*\)' 'list item validator requires an object/map shape'
-    Assert-Matches $listItemNormalizer 'trim\(PayloadNormalizer::scalarString\(\$item\[''id''\]\s*\?\?\s*\$item\[''aid''\]\s*\?\?\s*\$item\[''AID''\]\s*\?\?\s*''''\)\)[\s\S]*?preg_match\(''/\^\\d\{1,20\}\$/'',\s*\$id\)\s*!==\s*1[\s\S]*?Invalid upstream list item id' 'list item validator canonicalizes id aliases and requires a complete 1-to-20 digit JM id'
+    Assert-Matches $listItemNormalizer 'trim\(PayloadNormalizer::identifierString\(\$item\[''id''\]\s*\?\?\s*\$item\[''aid''\]\s*\?\?\s*\$item\[''AID''\]\s*\?\?\s*''''\)\)[\s\S]*?preg_match\(''/\^\\d\{1,20\}\$/'',\s*\$id\)\s*!==\s*1[\s\S]*?Invalid upstream list item id' 'list item validator canonicalizes string/integer id aliases and requires a complete 1-to-20 digit JM id'
     foreach ($projection in @(
         @('''id''\s*=>\s*\$id', 'id'),
         @('''name''\s*=>\s*PayloadNormalizer::scalarString', 'name'),

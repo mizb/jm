@@ -2,11 +2,11 @@
 
 日期：2026-07-17  
 范围：`D:\jm\jmcomic-api-main`、`D:\jm\jmapi-extension`  
-状态：**API `2026.07.17.5` 保留 `.4` 的 weekly type slug 修复，并修正真实章节 JSON 整数 ID 被严格 string 校验误判为 `MalformedChapterException` 的兼容回归；每域三次/最多 15 次及 12 秒总预算不变。数字 ID 的解析与加密服务链已 RED→GREEN；v1.4.15 APK 无需变更。`.2 / 7A2AC07A…70484` 的性能结果只作为历史证据保留；Docker 多 worker/fault 实跑和 `.5` 同一章节现场仍待外部环境。**
+状态：**API `2026.07.17.7` 在 `.6` 的全局 ID 类型门之上，修复单张图片可突破整批预取字节预算，以及列表 `total` 对浮点、负数和溢出值的静默截断；每域三次/最多 15 次及 12 秒总预算不变。两项均完成 RED→GREEN，v1.4.15 APK 无需变更。`.2 / 7A2AC07A…70484` 的性能结果只作为历史证据保留；Docker 多 worker/fault 实跑和 `.7` 真实现场仍待外部环境。**
 
 ## 1. 结论与边界
 
-- API 交付版本：`2026.07.17.5`，`index.php=A14992F3…1205`。
+- API 交付版本：`2026.07.17.7`，`index.php=1A3FF904…CD7C`。
 - 扩展交付版本：`1.4.15`，`versionCode = 15`。
 - 筛选显示已固定为中文：`排序 / 最新 / 最多浏览 / 最多点赞`。
 - Popular 固定映射 `list=promote`，Latest 固定映射 `list=weekly`；空搜索、标题搜索和 JM ID/URL 搜索契约均已在 Suwayomi 实际请求中验证。
@@ -15,6 +15,8 @@
 - 当前哈希 A/B 中，fixture 上游请求 `397 → 7`（减少 `98.237%`）；latest page 1/page 4/album p50 分别改善 `31.203% / 35.324% / 37.311%`，五路由 p99 均改善；health 与图片 p50/p95 回退。10 客户端图片队列 wall `100.018ms → 102.554ms`，本次回退 `2.536%`。这些结果只覆盖确定性 loopback、Windows PHP built-in 单 worker。
 - 2026-07-17 现场出现老版正常而新版 Latest 返回 HTTP 502。`.3` 恢复老版重试窗口后，用户日志仍显示约 1 秒内 generic JmException 502 且无网络失败记录。直接解密真实 `/week` 后确认 category 为数字、type 为字母 slug；严格校验误把成功 payload 当故障。`.4` 分离两类 ID 契约，并继续保留 12 秒 wall budget；JSON/解密/业务错误仍不切域。
 - `.4` 部署后的下一条现场日志明确变为 `MalformedChapterException`。对照老版与 Java 解析器发现当前章节 `id` 错误要求原生 string；`.5` 只增加 JSON int → canonical decimal string，并继续执行 requested-ID 等值及 1～20 位校验。浮点、布尔、数组、超长、非数字和错 ID 仍失败关闭；现场恢复仍以同一章节返回 200 为准。
+- 随后全局审计证明其他合法整数 ID 已能规范化，但通用 `scalarString()` 会反向接受 bool/float。`.6` 用 string/int 专用门统一 album、series、列表、搜索跳转和 weekly；非法类型不再进入结果或缓存，JSON array/object 与图片文件名安全契约未放宽。
+- `.7` 把预取剩余 byte budget 从协调器一路传到 HTTP body collector，超限时以 `budget-bytes` 在解码/缓存前停止；同时将列表 `total` 收紧为可表示的非负整数或纯数字字符串，不再截断 float、负数或溢出值。
 - 早先绑定 `2026.07.13.2 / index.php=680AF597…18FB7C` 的 A/B 继续作为独立历史证据保留；不得与当前哈希结果混用。
 - 两个目录都没有 `.git`。文件清单来自当前文件系统和实施计划，不是 Git diff；不伪造提交、提交哈希或版本历史。
 - 两个交付项目分别是 PHP 和 Kotlin/Android 项目，没有 `go.mod` 或 Go 源码。将其改写为 Go 会改变既定部署/API 架构，本轮未擅自迁移；“使用最新 Go”对当前两项目不适用。
@@ -37,10 +39,10 @@
 | 领域 | 已交付设计 | 合理性与错误修复 |
 |---|---|---|
 | 上游调用 | 每个业务请求共享 `RequestContext` 和 `UpstreamBudget`；默认总预算 12000ms、最多 15 次 attempt；每次 attempt 重建 token | 按健康顺序每域最多三次，生产瞬态重试间隔 300ms；保留老版恢复窗口，wall budget 消除其无界尾延迟 |
-| 预算耗尽 | 类型化 `UpstreamBudgetExhaustedException`；attempt 与 wall 分别映射 `budget-attempts`、`budget-wall` | 修复预算拒绝被误记为 `executor-error`；已有真实 network/502 失败时保留真实失败，不被随后预算拒绝覆盖 |
+| 预算耗尽 | 类型化 `UpstreamBudgetExhaustedException`；attempt、wall、bytes 分别映射 `budget-attempts`、`budget-wall`、`budget-bytes` | 修复预算拒绝被误记为 `executor-error`；预取字节上限进入单图 HTTP collector，已有真实 network/502 失败时仍保留真实失败 |
 | 域名发现 | fresh → stale → 内置 fallback；远程刷新延后到响应后，并有 lease、失败抑制和测试白名单 | 避免正常请求同步等待域名源；刷新失败不污染当前可用域名 |
 | 元数据缓存 | latest/popular/promote/search/weekly 源页、album、week defaults 使用规范化短 TTL；`TTL=0` 真正旁路 | key 包含 schema 与路由字段，只写入完整验证后的数据；malformed/失败响应不缓存 |
-| 单飞与预取 | APCu/文件锁 authority、页 lease、全局 slot、续租和 `finally` 释放；wall/byte/active/低内存预算 | 防止多 worker 重复解码和预取挤占；`prefetch=0` 同时禁止当前窗口、后续页和下一章预热 |
+| 单飞与预取 | APCu/文件锁 authority、页 lease、全局 slot、续租和 `finally` 释放；wall/byte/active/低内存预算 | 防止多 worker 重复解码和预取挤占；剩余 byte budget 约束单图 body，`prefetch=0` 同时禁止当前窗口、后续页和下一章预热 |
 | 图片资源 | chapter/manifest v2 相对 media path；decoded-page 严格 envelope/attestation；压缩字节、像素、容器结构、解码和编码均有限制 | 防止任意 URL、缓存投毒、截断/畸形图片、超大图片和失败结果进入缓存 |
 | CDN | allowlist 选择，主 CDN 失败后最多一次有界切换 | 保留容错但不扩大为任意下载代理 |
 | 限流与代理 | Redis 单次 Lua EVAL 滑动窗口、连接惰性建立和熔断；转发头只在 peer 命中可信 CIDR 时生效 | 修复非原子 check/increment 与伪造 `X-Forwarded-For` 风险 |
@@ -79,23 +81,25 @@
 
 | 文件 | SHA-256 |
 |---|---|
-| `jmcomic-api-main/index.php` | `A14992F3358DD3C744575A7BAD291D00B8F907A46B5E8FF5D2786CEEC7F71205` |
-| `jmcomic-api-main/Dockerfile` | `A8DA577DE7AB1A0657282473B664F961BC7D55D0FE96F51169438AE9133715D5` |
-| `jmcomic-api-main/docker-compose.yml` | `A09DF99EFD5F86ABD7F79389C499DEE208A0694ED017367BD92CAAC47EFB2D93` |
+| `jmcomic-api-main/index.php` | `1A3FF904F9319E13A7768AF754064F12CC6CE2B35B86406D9DBBBD885948CD7C` |
+| `jmcomic-api-main/Dockerfile` | `D8A9092B4BD8715C93CB07120E908D6F134B6F0F1BBC5206AF7A6FB43D10DDB7` |
+| `jmcomic-api-main/docker-compose.yml` | `415AFF049CD010B0C69C81C1B58010184ED38A50B9DFFC8F7B92BD7361DB28C9` |
 | `jmcomic-api-main/docker-compose.test.yml` | `ED29DE1F902F37BE99B6A62406A61571AA0714B11C64A1E7E04AD78984B95C94` |
-| `jmcomic-api-main/docker-entrypoint.sh` | `8CB265EB411772AA6AB016F97CC873121774E9DA77E3A57E77E1DC89E6C40AAD` |
-| `jmcomic-api-main/README.md` | `F06FE723A3A20F89F45ECACE8B5EE3402706CE83FB620B2AE1BE93E0ED4F4EA9` |
-| `jmcomic-api-main/.github/workflows/docker-build.yml` | `CE54D5006AB08FF55EB6F4A7803743EA03B87E7CC5D0DBCA8E21D24995F877C3` |
+| `jmcomic-api-main/docker-entrypoint.sh` | `8F43F44CAF3017D03DC28AB39242CA2035915DE1A5F21B31DC99111CD6C7E85B` |
+| `jmcomic-api-main/README.md` | `D80FD02D2C192E3A8F00E0E2ABC704A8799AD34DA3CB437A693D90CD0B8F174D` |
+| `jmcomic-api-main/.github/workflows/docker-build.yml` | `E902C90F1BA78574B5A5A144A06341EB35321159A6E1AAB53C06CC660D331D4D` |
 | `scripts/performance-baseline.ps1` | `C4B65EA3CC810F0E3C5E20523A5E389C0B303B0539263A40138A054E18C0A65F` |
 | `scripts/performance-evidence.ps1` | `35238705319F7E7344F200A2D85D71C903124FA8BF52A304350C01CBD342D5F0` |
 | `scripts/runtime-verify.ps1` | `68F2DF3C4CDAC6593DBDF846B2668E080FB6971E3A72835B3D7B09DD74D542BE` |
 | `scripts/transparent-https-performance.ps1` | `CC3362851AEC1E209ABC66BB7B419DFC5DF9DB7F93A6ABB5A4CEE36895BEF6D9` |
-| `tests/upstream-policy-runtime.php` | `D256E8C1F83F478AD4107FF49B044FA62F2DCAB0B4CCFFD410FFAAB9D3E9359D` |
+| `tests/upstream-policy-runtime.php` | `EA425DDD7D1B6DDAA8C1BBB31C68AE2AF62C07413E8F636F11DD4B507E65855F` |
+| `tests/prefetch-policy-runtime.php` | `2CF1A57661CE220AF9AC819FE9C8445C68A15568FA20188661CCA598DF7D1BA7` |
 | `tests/fault-injection-runtime.ps1` | `D4C766A4CF00734ACF6EC7E7C51F21E0D03B18BA20EEBE8347077CC819C79D3F` |
-| `tests/docker-runtime-contract.ps1` | `B3DC73AAE23887CC128052437F9CC85A02BA464C0914503DCE4074609A070468` |
-| `tests/resource-policy-runtime.php` | `97CF774AA8DCDE2674E047546D7FBB3F8979F978CB3FACD7FA0C96457DBFD516` |
-| `tests/adoption-hardening-contract.ps1` | `8C54F98B4AD1317B2726A82E875926C21FC0442059AA552C7F2754988CCEEF69` |
-| `tests/performance-policy-contract.ps1` | `EB80021C25EC2BF38D3C6EAA04F941FECDE99C160C79B4E572C15E9BFB966E03` |
+| `tests/docker-runtime-contract.ps1` | `0DDECC482BB493DE92105E809DF75FBD0BBA16A08C78983E58C07A65C4B5660A` |
+| `tests/resource-policy-runtime.php` | `39F890B9F746CFFBE422D575AA64D629A73356125D796428EA4B5CB2EB706922` |
+| `tests/adoption-hardening-contract.ps1` | `AD799783555BE437E0A0E29CCD9E4929002815B286BEA906FB858182D7EAE8F5` |
+| `tests/list-endpoint-contract.ps1` | `2956DF96772FC5D048C8798DA8F3EC464A7DAF43619CA4919D3C049F37234C46` |
+| `tests/performance-policy-contract.ps1` | `E7DDB2134075E20701038224D4C8EBC669AA7C36A42C6077696A409D0A4F1FAD` |
 | `tests/fixtures/transparent_https_proxy.py` | `CD97F28D9577A13BA47CA7D79E017611A2993BC96213BD5CF105FB95879808E2` |
 | `tests/fixtures/transparent_https_probe.php` | `A3A41A8D61CE5264D41590E77EF3E50F49D255BB8C63611A0DCC354A37AB2F0F` |
 | `tests/fixtures/upstream-router.php` | `1648E7C54DCC243058F6CFBE96EA2E28F64091CBCF88109E6308223891F3DA2B` |
@@ -103,12 +107,14 @@
 | `tests/transparent-https-performance-runtime.ps1` | `BAEA9275BD25A990C5C94DE8625FD60CA7DA85B8EC6C484A10B55002DE078123` |
 | `docs/superpowers/specs/2026-07-17-transparent-https-performance-harness-design.md` | `4E1755D3C2FB8FF0BBDE34077E6BB1F7B4377478AFC1F02A845454A334863D52` |
 | `docs/superpowers/plans/2026-07-17-transparent-https-performance-harness.md` | `5696EBAFEB40CF49E33DB787184F4BB9C8A1B8709ABC66B048E655381EEA998C` |
-| `docs/superpowers/specs/2026-07-13-cross-project-performance-design.md` | `0010766E5B138E5B8D5C9A84DE12C547A49E843ACC9122D82B51C7E81BFC03B8` |
+| `docs/superpowers/specs/2026-07-13-cross-project-performance-design.md` | `01A64EC65ED91C4C3C28CC43AB3F70DC9449E440169D72F13B24244A24E0ABEC` |
 | `docs/superpowers/plans/2026-07-13-cross-project-performance-delivery.md` | `415D9AF0A7AB6C6B7DD8E8FE8EEDAD83449AF4B1465CC17B20EFC4AAAC1488A6` |
 | `docs/superpowers/specs/2026-07-17-upstream-retry-compatibility-design.md` | `6B93D60AFD64FA699C24850F015330335F7E86619BB6DBEA74461F13EC1061DE` |
 | `docs/superpowers/plans/2026-07-17-upstream-retry-compatibility.md` | `25C9191E600D6548CB099BC6EACB9DA59D1AD61186A812B0FA26930D9759CE0E` |
-| `docs/bug-hunt-2026-07-17.md` | `B29CCD79F21BB3C421D78103FF1967729152F8DE769C2635BA7667A11F7B5F97` |
-| `docs/ai-delivery-prompt.md` | `5F6EA6FE3BAE5FFFCE3DB7174080B662E41E295FAB5E33672729B30755EF28E0` |
+| `docs/bug-hunt-2026-07-17.md` | `6619E71A5AAE4D1D745E6D86C928E76FCF68CB2CDD6CECA81A8267AB28391ECC` |
+| `docs/ai-delivery-prompt.md` | `1F757C6EB49A5ECA04F8EF091CD04B087F4E4C7FEDAB18B7163DA4CB41417CD8` |
+| `docs/advanced-reader-optimization-design.md` | `C37DB920D6A9C455979A26F39D30E36BD2016657516F8652A0A24B71C0C8768C` |
+| `docs/advanced-reader-optimization-ai-prompt.md` | `ACB9FCD812360727AAF91C283CF0C62E79F4D429524580CE01DEC23824FEFEF6` |
 | `performance-evidence/transparent-https-common-ab-20260717.json` | `47044F43CF37BF16E77F2B8C6DEA76A28FF0C74E348C6890FD80B0179CAB8B77` |
 | `performance-evidence/transparent-https-current-smoke-20260717.json` | `049CF4F97721D49BD2FE2A889F9805D92895B7BA1083A35C27C42A63F8C64C51` |
 | `performance-evidence/transparent-https-current-ab-20260717.json` | `6ECB423EFE3A2B66B196B1AEC9D15D96CA8F1DB0732ABD01181A24F5CDB2F9B5` |
@@ -120,16 +126,16 @@
 
 | 文件 | SHA-256 |
 |---|---|
-| `jmapi-extension/README.md` | `CF6FB612896B118D4B34A0C4FCDC6E6177460FA19D1B8B47E0FC8A4902F65652` |
+| `jmapi-extension/README.md` | `74CBB1CF0241F4E198F19BCACB0842CD3457DD634A20132D78322FE232A99ED8` |
 | `src/zh/jmapi/build.gradle.kts` | `955A6AB1E5B41C47CC46C11BE5A1351121933FA85B3158701D57D042D583E461` |
 | `src/zh/jmapi/src/eu/kanade/tachiyomi/extension/zh/jmapi/JmApi.kt` | `B7BCD1617B5277868D0A0ABEE6060D4613F2D4D54BF5667366B0532308316E3D` |
-| `tests/extension-contract.ps1` | `99FBA16A25DD063CD361ECC6CAAFAAB9B0EB2749D73BF1ABBBFCEE7CA7D2B644` |
+| `tests/extension-contract.ps1` | `9242B6AEEEA721C788953172907C8B45CBFBA5C88551B220154B5B94F657A6DB` |
 | `tests/extension-safety-contract.ps1` | `6E7752F7AFCFC810289E7A99F3FBD7EB684BE950618259A8E5FC4F28FF71A741` |
 | `scripts/build-with-keiyoushi.ps1` | `79F27AE74020352784068EE020BD7A25EB3874341E96D144932B301CE77ECAC3` |
 | `scripts/generate-repo-metadata.ps1` | `FD37F1EBFBD604B2F6345B4B0416425BF108D48D505B155A614574D470D32D1E` |
 | `scripts/path-safety.ps1` | `2FD3C44A58B4EE046EA1B5F5B0FF95C115359165A176426A73D0CC678F18411E` |
 | `docs/apk-optimization-design.md` | `B3BDB1DAD4D9ABD61C9C7A0269BB4454466FAE13C4C32EC4B32C89B4E3A9A22F` |
-| `docs/ai-delivery-prompt.md` | `3BA7D5DB4D9696C91ED5C35F4046FE0E6EDF534528F55F29F23C7DE774768930` |
+| `docs/ai-delivery-prompt.md` | `AB51FD71138D091FB58C72D58DE6B584032236DBF5AA448D4B40600797738F96` |
 | `dist-local/apk/tachiyomi-zh.jmapi-v1.4.15.apk` | `A1FD20677F53784CEAED728BCFC0A44E40DD53D35C47A582E1A3195D51B57872` |
 | `dist-local/index.min.json` | `A387CFCB4AD236E92114AFD4B29583E011B1CEB94AFB11C269F4BA348811D8BC` |
 | `dist-local/index.json` | `A387CFCB4AD236E92114AFD4B29583E011B1CEB94AFB11C269F4BA348811D8BC` |
@@ -152,12 +158,12 @@
 
 | 验证 | 结果 |
 |---|---|
-| API 静态合同 | list、page、docker contract、adoption hardening、performance policy 共 5 项，全部 exit 0 |
-| 上游策略运行时 | PASS；新增同域三次顺序、第 15 次瞬态 TLS 恢复和 15 次硬上限；原有 502、429、协议/解密/业务错误、scramble fallback、域名源失败及预算分类继续通过 |
+| API 静态合同 | 本轮相关 list、docker、adoption hardening、performance Prefetch/CacheList 均 exit 0；未重跑无关 page 全量合同 |
+| 上游策略运行时 | PASS；新增列表 total 合法最大值以及 float/负数/非有限/溢出拒绝；原有同域三次、第 15 次恢复、502、429、协议/解密/业务错误、scramble fallback、域名源失败及预算分类继续通过 |
 | `.3` 本机真实上游烟测 | 策略生效：HTTP 头为 `version=.3`、`attempts=15`、`deadline=0`，6381ms；日志逐域 `retry=0/1/2`。本机网络路径仍 reset 并返回 502，不能冒充用户服务器结果 |
 | `.4` weekly type 兼容 | RED 精确抛出 `Weekly defaults unavailable`；GREEN 完整执行 `/week → 缓存校验 → /week/filter`，HTTP 200、`version=.4`、`attempts=2`、结果含 `11/hanman` |
-| 预取策略运行时 | PASS；`budget-attempts`、`budget-wall` 与真实 `executor-error` 分类通过 |
-| 资源策略 | 73/73 PASS |
+| 预取策略运行时 | PASS；executor 收到剩余 byte budget，页内超限映射 `budget-bytes`；既有 attempt/wall 与真实 `executor-error` 分类继续通过 |
+| 资源策略 | 本轮聚焦 `compressed-body-limit` 1/1 PASS；此前 73/73 全量结果保留，未为本轮重复执行 |
 | catalog order | PASS |
 | fault 本地自测 | 并发屏障 PASS；fixture 锁定时 500/`ok=false`、释放后 200/`ok=true`；bootstrap 安全 500 PASS |
 | 本地列表缓存 | latest=1+1、popular=2、search=3、weekly=3、empty=1、malformed=2、redirect=1、promote=mixed、disabled=2 |
@@ -166,10 +172,11 @@
 | 资源 HTTP | PASS，含端口碰撞自检 |
 | Redis | Redis 3.2.100；16 workers，allowed=5、rejected=11、EVAL=16；时钟回退不超发，breaker fail-open/suppressed/recovered |
 | 输入/fixture 合同 | 输入校验、资源 fixture 与 fault harness 三项自身安全测试全部 PASS |
-| PHP lint | 当前交付源与测试 10/10，无语法错误（不把历史恢复源码重复计入） |
+| PHP lint | 本轮变更相关 `index.php` 与 3 个 PHP 测试 4/4 无语法错误；此前 10/10 全量结果保留 |
 | PowerShell AST | 两项目 23 个 `.ps1`，0 错误 |
 | YAML | PyYAML 6.0.3 解析两项目 4 个 YAML：两个 workflow、生产 compose、测试 compose；0 错误 |
 | 扩展合同 | 主合同 PASS；23 项 junction/race/rollback/manifest/version/path 安全用例全部 PASS |
+| 交付哈希 | 报告列出的 API/扩展文件 54 项逐项重算，0 mismatch |
 | Android 构建 | v1.4.15 的 `spotlessApply` 与 `assembleRelease` 均 `BUILD SUCCESSFUL` |
 | APK/元数据 | v1.4.15 aapt2 manifest、v1/v2 签名、实际证书、3 个 JSON 回读、APK 名称/版本/哈希一致性全部通过 |
 | 真实 Suwayomi | 2.3.2243 + Java 21；v1.4.15 installed=true/hasUpdate=false，中文筛选/设置、5 条浏览搜索路径、详情、章节、12 页与 WebP 图片通过；预取 disabled `0→1`、重新启用后保持 `1` |
@@ -195,8 +202,8 @@
 | Task 6 预取预算与去重 | authority flock、APCu 镜像重建、foreign token、续租、slot、wall/byte/active、`prefetch=0` 和预算停止原因测试通过 | 本机策略完成；compose 多 worker overlap 待 Docker |
 | Task 7 CDN/图片/Redis | chapter/manifest v2、相对路径、CDN failover、压缩字节/像素/容器/解码边界 71/71；真实 Redis 16 worker 原子限流通过 | 完成 |
 | Task 8 扩展修复 | 中文化、URL builder/basePath、ID/章节、页面 URL 权威来源和预取双向同步合同通过；v1.4.15 构建、元数据、签名和 Suwayomi 实际请求通过 | 完成 |
-| Task 9 版本与文档 | API 统一 `2026.07.17.5`；扩展 README/Gradle/APK/index 统一 v1.4.15/code 15 | 完成 |
-| Task 10 完整验证 | `.5` 上游策略、weekly slug、章节整数 ID、加密章节服务链、相关静态合同与 PHP lint通过；正式 A/B 与 after-only 深度证据绑定 `.2` 保留 | `.5` 本机相关回归完成并等待同一章节现场复验；Docker runtime/fault matrix 仍受外部环境阻塞 |
+| Task 9 版本与文档 | API 统一 `2026.07.17.7`；扩展 README/Gradle/APK/index 统一 v1.4.15/code 15 | 完成 |
+| Task 10 完整验证 | `.7` 聚焦预取页内 byte cap、严格列表 total、既有上游/资源/扩展合同与 PHP lint；正式 A/B 与 after-only 深度证据绑定 `.2` 保留 | `.7` 本机相关回归完成并等待真实现场复验；Docker runtime/fault matrix 仍受外部环境阻塞 |
 
 Git 提交步骤属于所有 Task 的条件性步骤。两个目标目录从开始到当前都没有 `.git`，因此这些步骤按计划 Preflight 第 49 行记录为“不适用/不可执行”，不能用无来源提交代替。
 
@@ -408,15 +415,15 @@ D:\jm\jmapi-extension\dist-local\
 
 - **代码优化：完成。**
 - **本机可执行验收：完成。**
-- **APK 与既有 Suwayomi 实际回归：完成；`.5` 同一章节现场复验待用户容器。**
+- **APK 与既有 Suwayomi 实际回归：完成；`.7` API 现场复验待用户容器。**
 - **pre-change 源码恢复：完成；四个权威 SHA-256 全部命中。**
 - **Docker 多 worker 验收：外部阻塞。**
 - **历史同条件运行态 BEFORE/AFTER：绑定 `A88271DC…7A13ED → 680AF597…18FB7C` 的旧证据保留。**
-- **性能 A/B：绑定 `A88271DC…7A13ED → 7A2AC07A…70484` 的 `.2` 结果已完成并独立重算；当前 `.5 / A14992F3…1205` 未重跑性能矩阵，不能继承 `.2` 标签。**
+- **性能 A/B：绑定 `A88271DC…7A13ED → 7A2AC07A…70484` 的 `.2` 结果已完成并独立重算；当前 `.7 / 1A3FF904…CD7C` 未重跑性能矩阵，不能继承 `.2` 标签。**
 - **生产签名：发布治理待用户提供稳定密钥。**
 
 除非代码、配置、APK 或外部条件发生变化，后续 AI 不应重做本报告已经有新鲜证据的本机工作。
 
 ## 10. 给后续 AI 的简短提示词
 
-> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先核对 API `2026.07.17.5 / A14992F3…1205`，并把 `.2` A/B `31FC02D2…24C9` 和 after-only `F709B6EE…928E5` 视为历史性能证据；未变化时不要重做 APK/Suwayomi/本机性能矩阵。强制重建 `.5` 并现场验证 Latest 与同一章节，失败时按 request-id 最小修复；具备 Docker 后完成 runtime/fault matrix，严守固定契约，禁止伪造 Git、签名或性能百分比。
+> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先核对 API `2026.07.17.7 / 1A3FF904…CD7C`，并把 `.2` A/B `31FC02D2…24C9` 和 after-only `F709B6EE…928E5` 视为历史性能证据；未变化时不要重做 APK/Suwayomi/本机性能矩阵。强制重建 `.7` 并现场验证 Latest、同一章节及预取统计，失败时按 request-id 最小修复；具备 Docker 后完成 runtime/fault matrix，严守固定契约，禁止伪造 Git、签名或性能百分比。

@@ -312,7 +312,7 @@ if ($listItemsNormalizer -notmatch $listItemsContract) {
 if ($listItemNormalizer -notmatch 'if\s*\(\s*!is_array\(\$item\)\s*\|\|\s*array_is_list\(\$item\)\s*\)') {
     throw 'List item validator must require a real object/map shape'
 }
-if ($listItemNormalizer -notmatch 'trim\(PayloadNormalizer::scalarString\(\$item\[''id''\]\s*\?\?\s*\$item\[''aid''\]\s*\?\?\s*\$item\[''AID''\]\s*\?\?\s*''''\)\)' -or
+if ($listItemNormalizer -notmatch 'trim\(PayloadNormalizer::identifierString\(\$item\[''id''\]\s*\?\?\s*\$item\[''aid''\]\s*\?\?\s*\$item\[''AID''\]\s*\?\?\s*''''\)\)' -or
     $listItemNormalizer -notmatch 'preg_match\(''/\^\\d\{1,20\}\$/'',\s*\$id\)\s*!==\s*1[\s\S]*?Invalid upstream list item id') {
     throw 'List item validator must canonicalize supported id aliases and require a complete 1-to-20 digit JM id'
 }
@@ -376,8 +376,10 @@ foreach ($validator in @(
     }
 }
 $pagedListNormalizer = Get-PhpFunctionBlock $source 'normalizePagedListPayload'
+$listTotalNormalizer = Get-PhpFunctionBlock $source 'normalizeListTotal'
 $promoteHomeNormalizer = Get-PhpFunctionBlock $source 'normalizePromoteHomePayload'
-if ($pagedListNormalizer -notmatch 'array_key_exists\(\$itemsKey,\s*\$payload\)[\s\S]*?\$redirectAid\s*===\s*''''[\s\S]*?\$totalRaw[\s\S]*?preg_match\(''/\^\\d\+\$/''') {
+if ($pagedListNormalizer -notmatch 'array_key_exists\(\$itemsKey,\s*\$payload\)[\s\S]*?\$redirectAid\s*===\s*''''[\s\S]*?\$totalRaw[\s\S]*?self::normalizeListTotal\(\$totalRaw\)' -or
+    $listTotalNormalizer -notmatch 'is_int\(\$value\)[\s\S]*?\$value\s*>=\s*0[\s\S]*?!is_string\(\$value\)[\s\S]*?preg_match\(''/\^\\d\+\$/''[\s\S]*?PHP_INT_MAX[\s\S]*?strcmp') {
     throw 'Paged list validator must require the items key or a legal redirect and a numeric total'
 }
 if ($pagedListNormalizer -notmatch '\$totalRaw\s*=\s*\$payload\[''total''\]\s*\?\?\s*\(\$redirectAid\s*!==\s*''''\s*\?\s*1\s*:\s*null\)') {

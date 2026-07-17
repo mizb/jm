@@ -22,19 +22,19 @@
 
 ## 当前检查点
 
-- API：`2026.07.17.5`。
+- API：`2026.07.17.7`。
 - APK 交付版本：`1.4.15 / versionCode 15`；`1.4.14 / 14` 的反代子路径页面 URL 缺陷仅作为历史 RED 基线。
-- 当前 API `index.php` SHA-256：`A14992F3358DD3C744575A7BAD291D00B8F907A46B5E8FF5D2786CEEC7F71205`；v1.4.15 APK SHA-256：`A1FD20677F53784CEAED728BCFC0A44E40DD53D35C47A582E1A3195D51B57872`。
+- 当前 API `index.php` SHA-256：`1A3FF904F9319E13A7768AF754064F12CC6CE2B35B86406D9DBBBD885948CD7C`；v1.4.15 APK SHA-256：`A1FD20677F53784CEAED728BCFC0A44E40DD53D35C47A582E1A3195D51B57872`。
 - 本机代码、聚焦静态/运行时测试、Keiyoushi 构建、元数据和 Suwayomi 2.3.2243 真实回归已经完成。
 - `.2` 正式同条件性能 A/B 已完成：恢复版 `A88271DC…7A13ED` 对 `.2 / 7A2AC07A…70484`，证据 SHA-256 为 `31FC02D295FF4F5F25CA4C0AEB46DEF1EB73092E7AA095D628002CCFF05524C9`；这是 `.3` 前的历史性能证据，不得改标为 `.3`。
 - 当前 after-only 深度证据 SHA-256 为 `F709B6EE207B5A9DA790D51DC7F6A88C4FDE3D4D23AF51C12C986E9042A928E5`，包含 APCu 碎片与预取单事件利用率；不得外推为长期用户行为。
-- `.5` 保留每域最多三次、300ms 间隔、默认最多 15 次和 12 秒总预算；在 `.4` 的 weekly type slug 修复上，新增真实章节 JSON 整数 ID 的安全字符串规范化，同时继续拒绝浮点、布尔、数组、超长和错 ID。优先重建并核对 `X-JM-API-Version: 2026.07.17.5` 与同一章节现场结果。
-- 历史透明 HTTPS A/B 分别绑定 `680AF597…18FB7C / 2026.07.13.2`、`.1 / 53A15D40…A3B5C` 和 `.2 / 7A2AC07A…70484`；`.5` 尚无同条件性能 A/B，证据不得混用。
+- `.7` 保留 `.6` 的 string/int ID 类型门、每域最多三次、300ms 间隔、默认最多 15 次和 12 秒总预算；新增单图内预取 byte cap，并拒绝列表 `total` 的 float、负数和整数溢出。优先重建并核对 `X-JM-API-Version: 2026.07.17.7`、Latest、同一章节和预取统计。
+- 历史透明 HTTPS A/B 分别绑定 `680AF597…18FB7C / 2026.07.13.2`、`.1 / 53A15D40…A3B5C` 和 `.2 / 7A2AC07A…70484`；`.7` 尚无同条件性能 A/B，证据不得混用。
 - 两项目没有 Git 元数据；原始修改时间点没有预先测量 BEFORE。不得伪造 diff、commit、基线或提升百分比。
 
 开始时先比较最终报告所列源码与产物哈希：
 
-- 哈希未变化：不要重做 APK、Suwayomi 或历史 A/B；优先完成 `.5` 现场章节 502 复验和 Docker 外部验收。
+- 哈希未变化：不要重做 APK、Suwayomi 或历史 A/B；优先完成 `.7` 现场 API 复验和 Docker 外部验收。
 - 哈希发生变化：调查变化来源，保留用户改动，按影响范围重新执行合同、运行时、构建和回归，并更新最终报告。
 - Docker 或生产密钥仍不可用：完成其他所有可执行工作后，保留精确错误证据和可复制命令；不要以猜测代替结果。
 - Suwayomi 与 API 若位于不同容器，扩展中的 `127.0.0.1` 指向 Suwayomi 容器自身；必须使用该容器可访问的 API 服务名、平台支持时的 `host.docker.internal` 或局域网地址。
@@ -79,4 +79,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\fault-injection-runt
 
 ## 简短启动提示词
 
-> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。核对 API `2026.07.17.5 / A14992F3…1205`，并把 `.2` A/B `31FC02D2…24C9` 与 after-only `F709B6EE…928E5` 视为历史性能证据；未变化时不重做 APK/Suwayomi/本机性能矩阵。先强制重建 `.5` 并验证 Latest 与同一章节，失败时按 request-id 最小修复；随后完成具备条件的 Docker 验收，严守固定契约。
+> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。核对 API `2026.07.17.7 / 1A3FF904…CD7C`，并把 `.2` A/B `31FC02D2…24C9` 与 after-only `F709B6EE…928E5` 视为历史性能证据；未变化时不重做 APK/Suwayomi/本机性能矩阵。先强制重建 `.7` 并验证 Latest、同一章节和预取统计，失败时按 request-id 最小修复；随后完成具备条件的 Docker 验收，严守固定契约。

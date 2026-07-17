@@ -3080,6 +3080,23 @@ function testCompressedBodyLimitHasDistinctStatusAndNeverTriggersCdnFailover(): 
     resourceAssertSame(1, count($transport->urls), 'compressed-byte cap was misclassified as network failover');
     resourceAssertSame([4], $transport->bodyLimits, 'image transport did not receive the configured compressed-byte cap');
 
+    $budgetContext = RequestContext::forTest('prefetch-image-body-limit', 12000, 6);
+    $budgetTransport = new ResourceSequenceTransport([$limitedResult, resourceHttpResult(200, 'must-not-be-used')]);
+    $budgetApi = JmApiClient::forTest($budgetContext, $budgetTransport, ['https://api.example.test']);
+    $budgetThrown = null;
+    try {
+        $budgetApi->downloadImage('/media/photos/350234/00001.jpg', 3);
+    } catch (Throwable $error) {
+        $budgetThrown = $error;
+    }
+    resourceAssert(
+        $budgetThrown instanceof UpstreamBudgetExhaustedException
+            && $budgetThrown->reason() === UpstreamBudgetExhaustedException::REASON_BYTES,
+        'prefetch byte budget did not stop the in-flight image download with a typed reason',
+    );
+    resourceAssertSame(1, count($budgetTransport->urls), 'prefetch byte exhaustion incorrectly triggered CDN failover');
+    resourceAssertSame([3], $budgetTransport->bodyLimits, 'image transport did not receive the remaining prefetch byte budget');
+
     putenv('JM_IMAGE_MAX_COMPRESSED_BYTES=0');
     $zeroContext = RequestContext::forTest('image-body-limit-zero', 12000, 6);
     $zeroTransport = new ResourceSequenceTransport([resourceHttpResult(200, 'bounded-image')]);
