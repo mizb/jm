@@ -4,7 +4,7 @@ Date: 2026-07-07
 
 Scope:
 
-- Target: `D:\jm\jmcomic-api-main`
+- Target: `D:\jm\jm-boom-master\jmcomic-api-main`
 - No Rust/Tauri files were edited.
 - The service remains a PHP/Docker API service on port `8088`.
 

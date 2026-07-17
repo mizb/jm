@@ -2,8 +2,8 @@
 
 Advanced follow-up design:
 
-- `D:\jm\jmcomic-api-main\docs\advanced-reader-optimization-design.md`
-- `D:\jm\jmcomic-api-main\docs\advanced-reader-optimization-ai-prompt.md`
+- `D:\jm\jm-boom-master\jmcomic-api-main\docs\advanced-reader-optimization-design.md`
+- `D:\jm\jm-boom-master\jmcomic-api-main\docs\advanced-reader-optimization-ai-prompt.md`
 
 Use the advanced design for the next implementation round that adopts the original reader ideas: APCu single-flight, tiered prefetch, optional next-chapter preheat, APCu waterline behavior, and upstream domain health scoring.
 
@@ -227,9 +227,9 @@ Do not:
 Static checks currently available on this Windows workspace:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File D:\jm\jmcomic-api-main\tests\page-endpoint-contract.ps1
-powershell -ExecutionPolicy Bypass -File D:\jm\jmcomic-api-main\tests\docker-runtime-contract.ps1
-powershell -ExecutionPolicy Bypass -File D:\jm\jmcomic-api-main\tests\list-endpoint-contract.ps1
+powershell -ExecutionPolicy Bypass -File D:\jm\jm-boom-master\jmcomic-api-main\tests\page-endpoint-contract.ps1
+powershell -ExecutionPolicy Bypass -File D:\jm\jm-boom-master\jmcomic-api-main\tests\docker-runtime-contract.ps1
+powershell -ExecutionPolicy Bypass -File D:\jm\jm-boom-master\jmcomic-api-main\tests\list-endpoint-contract.ps1
 powershell -ExecutionPolicy Bypass -File D:\jm\jmapi-extension\tests\extension-contract.ps1
 ```
 

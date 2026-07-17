@@ -7,7 +7,7 @@ Date: 2026-07-07
 Target project:
 
 ```text
-D:\jm\jmcomic-api-main
+D:\jm\jm-boom-master\jmcomic-api-main
 ```
 
 Reference project:
@@ -382,4 +382,4 @@ curl -i "http://localhost:8088/?search=董卓&page=1&format=min"
 
 ## AI Continuation Prompt
 
-Read `D:\jm\jmcomic-api-main\docs\jmcomic-python-reference-adoption-design.md` and autonomously implement it in `D:\jm\jmcomic-api-main` only. Do not touch Rust/Tauri code. Start with Phase 1 request failure classification, then Phase 2 entity tolerance, Phase 3 security/diagnostics corrections, and Phase 4 tests/verification. Preserve the existing PHP API contracts, Docker deployment, port 8088, APCu-only image cache, optional Redis behavior, and all guardrails. Add or update PowerShell contract tests, run the available static tests, and document any Docker/runtime verification that cannot be executed locally.
+Read `D:\jm\jm-boom-master\jmcomic-api-main\docs\jmcomic-python-reference-adoption-design.md` and autonomously implement it in `D:\jm\jm-boom-master\jmcomic-api-main` only. Do not touch Rust/Tauri code. Start with Phase 1 request failure classification, then Phase 2 entity tolerance, Phase 3 security/diagnostics corrections, and Phase 4 tests/verification. Preserve the existing PHP API contracts, Docker deployment, port 8088, APCu-only image cache, optional Redis behavior, and all guardrails. Add or update PowerShell contract tests, run the available static tests, and document any Docker/runtime verification that cannot be executed locally.

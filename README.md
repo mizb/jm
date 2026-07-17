@@ -26,7 +26,7 @@ docker compose up -d --build
 
 ```text
 ghcr.io/<你的GitHub用户名>/<仓库名>:latest
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.13.2
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.7
 ```
 
 如果要直接使用 GHCR 镜像，可以把 `docker-compose.yml` 中的 `build` 删除，并把 `image` 改成你的镜像名：
@@ -39,22 +39,9 @@ services:
     ports:
       - "8088:8088"
     environment:
-      JM_API_VERSION: "2026.07.13.2"
-      JM_REQUEST_BUDGET_MS: "12000"
-      JM_MAX_UPSTREAM_ATTEMPTS: "6"
-      JM_LIST_CACHE_TTL: "60"
-      JM_SEARCH_CACHE_TTL: "30"
-      JM_WEEKLY_LIST_CACHE_TTL: "60"
-      JM_ALBUM_CACHE_TTL: "45"
-      JM_WEEK_DEFAULTS_CACHE_TTL: "600"
-      JM_WEEK_DEFAULTS_STALE_TTL: "3600"
-      JM_CACHE_FILL_WAIT_MS: "750"
-      JM_CACHE_FILL_LOCK_TTL: "15"
+      JM_API_VERSION: "2026.07.07.7"
       JM_PREFETCH_PAGES: "10"
       JM_PREFETCH_HIGH_PRIORITY_PAGES: "2"
-      JM_PREFETCH_WALL_BUDGET_MS: "5000"
-      JM_PREFETCH_BYTE_BUDGET: "16777216"
-      JM_PREFETCH_MAX_ACTIVE: "2"
       JM_PREFETCH_MIN_FREE_BYTES: "33554432"
       JM_PREFETCH_MIN_FREE_RATIO: "15"
       JM_PAGE_CACHE_TTL: "3600"
@@ -68,17 +55,6 @@ services:
       JM_NEXT_CHAPTER_PREFETCH_PAGES: "2"
       JM_DOMAIN_COOLDOWN_SECONDS: "120"
       JM_DOMAIN_STATS_TTL: "21600"
-      JM_DOMAIN_FRESH_TTL: "86400"
-      JM_DOMAIN_STALE_TTL: "86400"
-      JM_DOMAIN_REFRESH_DEFERRED: "1"
-      JM_DOMAIN_SOURCE_TIMEOUT_MS: "1500"
-      JM_DOMAIN_REFRESH_BUDGET_MS: "3000"
-      JM_DOMAIN_REFRESH_FAILURE_TTL: "60"
-      JM_DOMAIN_REFRESH_LEASE_TTL: "15"
-      JM_IMAGE_MAX_COMPRESSED_BYTES: "33554432"
-      JM_IMAGE_MAX_PIXELS: "80000000"
-      JM_CDN_EPOCH: "1"
-      JM_TRUSTED_PROXY_CIDRS: ""
       PHP_CLI_SERVER_WORKERS: "10"
     restart: unless-stopped
 ```
@@ -106,7 +82,7 @@ docker image inspect ghcr.io/<你的GitHub用户名>/<仓库名>:latest --format
 如果想完全避免 `latest` 缓存误判，可以把 compose 里的镜像固定为：
 
 ```text
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.13.2
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.07.7
 ```
 
 启动后检查服务：
@@ -129,7 +105,7 @@ docker logs jmcomic-api
 看到类似下面这行，就能判断容器加载的是哪一版：
 
 ```text
-JM API version 2026.07.13.2
+JM API version 2026.07.07.7
 ```
 
 `health=1` 会返回顶层 `version` 和 `diagnostics.app_version`。所有响应也会带 `X-JM-API-Version` 头，所以直接 `php -S` 和 Docker 启动都能通过接口确认当前运行版本。
@@ -214,8 +190,6 @@ curl "http://localhost:8088/?search=董卓&page=1"
 | `list` | `promote` | 原版首页推荐；可选 `section`/`id` |
 | `list` | `weekly` | 原版每周必看/每周推荐；可选 `category_id` 和 `type_id` |
 | `page` | `1` | 1-based 分页 |
-| `order` | `new` | 仅用于 `popular`：`new`、`mv` 或 `tf`；非法值回退为 `new` |
-| `o` | `mv` | `order` 的兼容别名；同时传入时 `order` 优先 |
 | `section` | `0` | 推荐分区 ID，默认 `0` |
 | `category_id` | `1` | 每周推荐分类 ID；不传则自动读取原版默认分类 |
 | `type_id` | `1` | 每周推荐类型 ID；不传则自动读取原版默认类型 |
@@ -223,15 +197,6 @@ curl "http://localhost:8088/?search=董卓&page=1"
 ```
 GET /?list=latest&page=1
 ```
-
-热门目录排序示例：
-
-```text
-GET /?list=popular&page=1&order=new|mv|tf&format=min
-GET /?list=popular&page=1&order=mv&format=min
-```
-
-目录排序与标题搜索排序是独立契约。目录只接受 `new`、`mv`、`tf`；标题搜索保留 `mr`、`mv`、`mp`、`tf`、`new`。
 
 响应：
 
@@ -269,7 +234,7 @@ GET /?list=popular&page=1&order=mv&format=min
 GET /?search=董卓&page=1
 ```
 
-`order`/`o` 可选，默认 `mr`，可传 `mr`、`mv`、`mp`、`tf`、`new`。
+`order`/`o` 可选，默认 `mr`，可传 `mv`、`mp`、`tf`。
 
 ### GET /?jmid={id}
 
@@ -382,9 +347,9 @@ GET /?jmid=350234&chapter=413446
 {
   "code": 200,
   "success": true,
-  "version": "2026.07.13.2",
+  "version": "2026.07.07.7",
   "diagnostics": {
-    "app_version": "2026.07.13.2",
+    "app_version": "2026.07.07.7",
     "php": "8.5.7",
     "apcu": true,
     "apcu_details": {
@@ -436,10 +401,6 @@ Concurrent requests for the same decoded page use an APCu single-flight lock. On
 When a chapter response is generated with album context, image URLs include a `next_chapter` hint when the next reading chapter is known. Near the end of a chapter, the API can preheat the next chapter's first pages without making direct image requests fetch album metadata.
 
 Upstream API domains are scored in APCu with success/failure counts, failure streak, short cooldown, and EWMA latency. `JM_DOMAIN_COOLDOWN_SECONDS` controls the base cooldown. If every domain is cooling down, the API falls back to the original domain order and still tries the request.
-
-Domain discovery no longer performs remote configuration probes while constructing a business request. A request immediately uses a fresh dynamic entry, a bounded stale entry, or the built-in HTTPS fallback list. `JM_DOMAIN_FRESH_TTL` defaults to 86400 seconds; `JM_DOMAIN_STALE_TTL` defaults to another 86400 seconds and `0` disables stale use. The health response reports the selected source, age, fresh/stale deadlines, and whether refresh is suppressed.
-
-When `JM_DOMAIN_REFRESH_DEFERRED=1` (default), a stale/fallback request may register one APCu-leased refresh in a PHP shutdown callback. This is deferred work, not an asynchronous queue: the PHP worker remains occupied until the callback finishes, and the effect on client TTFB/full-response time must be measured in the deployment environment. Each source is capped by `JM_DOMAIN_SOURCE_TIMEOUT_MS=1500`, the whole refresh by `JM_DOMAIN_REFRESH_BUDGET_MS=3000`, and failures are suppressed for `JM_DOMAIN_REFRESH_FAILURE_TTL=60` seconds. Set `JM_DOMAIN_REFRESH_DEFERRED=0` and recreate the container to disable remote refresh immediately while retaining cached/built-in domains.
 
 `chapter=@N`、`chapter=all` 和逗号分隔章节列表会先校验章节属于指定 `jmid`。数字 `chapter` + `page` 快路径为了减少 album 元数据请求，只校验章节 ID 格式和页码范围，不校验 album membership。图片接口不会接受任意外部图片 URL，因此不会作为开放代理使用。
 
@@ -502,7 +463,7 @@ Redis 不可用时优雅降级 — 不限流。
 ```
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
-X-JM-API-Version: 2026.07.13.2
+X-JM-API-Version: 2026.07.07.7
 X-JM-Cache: HIT|MISS
 X-JM-Image-Codec: webp|jpeg|gif|png|original
 X-JM-Singleflight: hit|owner|hit-after-wait|timeout|disabled
@@ -548,95 +509,7 @@ final class JmConfig
 }
 ```
 
-API 域名请求路径只读取 APCu 中的 fresh/stale 条目或内置 HTTPS fallback，不会同步等待远程配置源。默认在响应结束阶段以 lease 单飞刷新；该 deferred shutdown 回调仍占用 PHP worker，并不等于独立后台任务。若实测影响完整响应或 worker 饥饿，可设置 `JM_DOMAIN_REFRESH_DEFERRED=0` 后重建容器关闭刷新。
-
-### 性能与安全环境变量
-
-`docker-compose.yml` 使用 `${变量:-默认值}`，因此可通过宿主环境变量覆盖，而不需要修改 PHP 代码。变更后必须重建容器；deferred 域名刷新仍在 shutdown 阶段占用 worker，是否影响 TTFB 和完整响应时间必须以本机测量为准。
-
-| 变量 | 默认值 | `0` / 空值语义与风险 |
-|---|---:|---|
-| `JM_REQUEST_BUDGET_MS` | `12000` | 不接受 0；单个业务请求共享的上游总预算 |
-| `JM_MAX_UPSTREAM_ATTEMPTS` | `6` | 不接受 0；同一业务请求的总上游尝试上限 |
-| `JM_LIST_CACHE_TTL` | `60` | `0` 关闭 latest/popular/promote 源页缓存，上游调用会增加 |
-| `JM_SEARCH_CACHE_TTL` | `30` | `0` 关闭搜索源页缓存 |
-| `JM_WEEKLY_LIST_CACHE_TTL` | `60` | `0` 关闭 weekly filter 源页缓存 |
-| `JM_ALBUM_CACHE_TTL` | `45` | `0` 关闭 album 元数据缓存 |
-| `JM_WEEK_DEFAULTS_CACHE_TTL` | `600` | `0` 关闭 weekly 默认值 fresh cache |
-| `JM_WEEK_DEFAULTS_STALE_TTL` | `3600` | `0` 禁止 weekly 默认值 stale-if-error |
-| `JM_CACHE_FILL_WAIT_MS` | `750` | `0` 让并发 loser 不等待 owner，可能增加重复上游请求 |
-| `JM_CACHE_FILL_LOCK_TTL` | `15` | lease 秒数；不是禁用开关，必须覆盖 producer 时间 |
-| `JM_DOMAIN_FRESH_TTL` | `86400` | 最小 60 秒；动态域名 fresh 窗口 |
-| `JM_DOMAIN_STALE_TTL` | `86400` | `0` 禁止使用陈旧动态域名 |
-| `JM_DOMAIN_REFRESH_DEFERRED` | `1` | `0` 关闭远程域名刷新，仍可使用现有缓存和内置 fallback |
-| `JM_DOMAIN_SOURCE_TIMEOUT_MS` | `1500` | 单个配置源超时，不接受 0 |
-| `JM_DOMAIN_REFRESH_BUDGET_MS` | `3000` | 整轮 deferred 刷新预算，不接受 0 |
-| `JM_DOMAIN_REFRESH_FAILURE_TTL` | `60` | 失败负缓存秒数，避免每请求重新探测 |
-| `JM_PREFETCH_PAGES` | `10` | `0` 关闭普通预取 |
-| `JM_PREFETCH_WALL_BUDGET_MS` | `5000` | `0` 不允许后台预取工作 |
-| `JM_PREFETCH_BYTE_BUDGET` | `16777216` | `0` 不允许后台预取下载 |
-| `JM_PREFETCH_MAX_ACTIVE` | `2` | `0` 关闭全局预取 slot |
-| `JM_IMAGE_MAX_COMPRESSED_BYTES` | `33554432` | 安全上限；`0` 会回退默认值，不会取消保护 |
-| `JM_IMAGE_MAX_PIXELS` | `80000000` | 安全上限；`0` 会回退默认值，不会取消保护 |
-| `JM_CDN_EPOCH` | `1` | 改值会确定性重排 cover CDN，可用于运维切换 |
-| `JM_TRUSTED_PROXY_CIDRS` | 空 | 空表示不信任任何转发头；只填写实际可信代理 CIDR |
-
-### 即时性能策略回滚
-
-下面是 `.env` 等价值，保存后执行 `docker compose up -d --force-recreate`：
-
-```dotenv
-JM_LIST_CACHE_TTL=0
-JM_SEARCH_CACHE_TTL=0
-JM_WEEKLY_LIST_CACHE_TTL=0
-JM_ALBUM_CACHE_TTL=0
-JM_WEEK_DEFAULTS_CACHE_TTL=0
-JM_WEEK_DEFAULTS_STALE_TTL=0
-JM_DOMAIN_REFRESH_DEFERRED=0
-JM_PREFETCH_PAGES=0
-JM_PREFETCH_MAX_ACTIVE=0
-JM_PREFETCH_WALL_BUDGET_MS=0
-JM_PREFETCH_BYTE_BUDGET=0
-```
-
-Windows PowerShell 可直接在当前会话设置并重建：
-
-```powershell
-$env:JM_LIST_CACHE_TTL = '0'
-$env:JM_SEARCH_CACHE_TTL = '0'
-$env:JM_WEEKLY_LIST_CACHE_TTL = '0'
-$env:JM_ALBUM_CACHE_TTL = '0'
-$env:JM_WEEK_DEFAULTS_CACHE_TTL = '0'
-$env:JM_WEEK_DEFAULTS_STALE_TTL = '0'
-$env:JM_DOMAIN_REFRESH_DEFERRED = '0'
-$env:JM_PREFETCH_PAGES = '0'
-$env:JM_PREFETCH_MAX_ACTIVE = '0'
-$env:JM_PREFETCH_WALL_BUDGET_MS = '0'
-$env:JM_PREFETCH_BYTE_BUDGET = '0'
-docker compose up -d --force-recreate
-curl.exe "http://127.0.0.1:8088/?health=1"
-```
-
-恢复 compose 默认值时删除这些会话变量并重建。环境变量只回滚服务器性能策略；扩展端正确性修复、Redis Lua 原子限流、`chapter:v2` / `manifest:v2` CDN 数据结构必须通过版本回退或 commit rollback 恢复，不能声称环境变量会重新启用旧 bug。
-
-部署前后使用同一输入、worker、warm-up 和样本数测量：
-
-```powershell
-docker compose build --no-cache
-docker compose up -d --force-recreate
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime-verify.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\performance-baseline.ps1 `
-  -RuntimeKind docker -RuntimeSourceBinding docker-image `
-  -RuntimeImageDigest 'sha256:<本次镜像的64位SHA-256>' `
-  -ActualWorkerCount 10 `
-  -NetworkConditionId 'same-network-profile-v1' `
-  -ResourceProfileId 'cpu2-memory512m-apcu128m-v1' `
-  -OutputPath .\performance-after.json -ComparePath .\performance-before.json
-```
-
-`ActualWorkerCount` 必须填写该次运行的真实 worker 数，不能照抄 compose 文本。`NetworkConditionId` 与 `ResourceProfileId` 必须由执行者明确命名同一网络、CPU/内存限制配置；`unverified` 不能用于 BEFORE/AFTER 比较。Docker 运行还必须记录实际镜像 digest。比较门会校验两侧 PowerShell/PHP、worker、APCu 容量、静态缓存/预取策略指纹、网络与资源配置完全一致，并要求每个路由至少 100 个成功样本以及非空 p95/p99；伪哈希、缺失字段、矛盾计数或样本不足都会 fail-closed。
-
-报告同时保存声明/实际 worker、`index.php`/Dockerfile/compose/entrypoint SHA-256、APCu hit/miss/expunge/碎片率、并发 client-occupancy ratio，以及一次启用预取后的 wall time、后续命中利用率和本次探针内未利用率。client occupancy 是 `sum(client elapsed)/(batch wall × actual workers)` 的有界客户端估算，不是服务端 CPU 或 worker busy 采样；预取浪费率也只覆盖探针随后读取的第 2～3 页。没有真实 BEFORE 时不得输出百分比提升。
+API 域名每 24 小时自动从禁漫域名服务器更新，无需手动维护。
 
 ## 生产部署
 
