@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-echo "JM API version ${JM_API_VERSION:-2026.07.13.2}"
+echo "JM API version ${JM_API_VERSION:-2026.07.13.1}"
 echo "JM API listening on http://0.0.0.0:8088"
 
 exec php \

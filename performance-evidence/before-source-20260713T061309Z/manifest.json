@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "snapshot_timestamp_utc": "2026-07-13T06:13:09.236Z",
+  "authority": {
+    "session_log": "C:\\Users\\MZB\\.codex\\sessions\\2026\\07\\13\\rollout-2026-07-13T09-12-40-019f5908-8c1b-70e0-9429-b84f65d842bd.jsonl",
+    "line": 3042
+  },
+  "method": "Reverse replay of successful patch_apply_end diffs after the authoritative hash snapshot; overwritten same-file sections restored from original apply_patch input.",
+  "warning": "Exact source snapshot only; not a runtime performance-before measurement.",
+  "event_counts": {
+    "index.php": 176,
+    "Dockerfile": 2,
+    "docker-compose.yml": 3,
+    "docker-entrypoint.sh": 1
+  },
+  "overwritten_sections_restored": {
+    "index.php": 1,
+    "Dockerfile": 0,
+    "docker-compose.yml": 0,
+    "docker-entrypoint.sh": 0
+  },
+  "sha256": {
+    "index.php": "A88271DCD759CDB4992FB2C49C963441FDA7028201E991211CD4DE4B497A13ED",
+    "Dockerfile": "CC978373E4793F235B096F06FA5BF08D07FF6E1B88A88FAB95D699555B28F59A",
+    "docker-compose.yml": "6BA1D7615E6859CA8C4500579FAC1A9E7604EB25BAAE1885C6201EDB8339F5CE",
+    "docker-entrypoint.sh": "0E67AA6707C7E333920423DD43372AA3DBE9E0652E85CC958A5EB418CA043CDA"
+  }
+}

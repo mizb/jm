@@ -1,0 +1,74 @@
+services:
+  jmcomic-api:
+    environment:
+      PHP_CLI_SERVER_WORKERS: "12"
+      JM_TEST_MODE: "1"
+      JM_TEST_ALLOWED_HOSTS: "api-good,api-timeout,api-502,cdn-good,cdn-fail,domain-config,127.0.0.1,localhost"
+      JM_TEST_API_BASE_URLS: "${JM_TEST_API_BASE_URLS:-http://api-good:8090,http://api-502:8090,http://api-timeout:8090}"
+      JM_TEST_FALLBACK_API_BASE_URLS: "${JM_TEST_FALLBACK_API_BASE_URLS:-http://api-good:8090}"
+      JM_TEST_DOMAIN_SOURCE_URLS: "${JM_TEST_DOMAIN_SOURCE_URLS:-http://domain-config:8090/domain-config-good,http://domain-config:8090/domain-config-timeout}"
+      JM_TEST_CDN_BASE_URLS: "${JM_TEST_CDN_BASE_URLS:-http://cdn-fail:8090,http://cdn-good:8090}"
+      JM_TEST_PREFETCH_STATS_DIR: "/tmp/jm-fixture-stats"
+      REDIS_HOST: "jm-redis"
+      REDIS_PORT: "6379"
+      REDIS_TIMEOUT_MS: "150"
+      REDIS_BREAKER_TTL_SECONDS: "5"
+    volumes:
+      - ./tests:/app/tests:ro
+      - jm-fixture-stats:/tmp/jm-fixture-stats
+    depends_on:
+      jm-upstream-fixture:
+        condition: service_started
+      jm-redis:
+        condition: service_healthy
+
+  jm-upstream-fixture:
+    image: php:8.3-cli-alpine
+    environment:
+      PHP_CLI_SERVER_WORKERS: "8"
+      JM_FIXTURE_STATS_DIR: "/tmp/jm-fixture-stats"
+    command:
+      - sh
+      - -lc
+      - chmod 0777 /tmp/jm-fixture-stats && umask 000 && exec php -S 0.0.0.0:8090 /fixture/upstream-router.php
+    volumes:
+      - ./tests/fixtures:/fixture:ro
+      - jm-fixture-stats:/tmp/jm-fixture-stats
+    ports:
+      - "127.0.0.1:8091:8090"
+    networks:
+      default:
+        aliases:
+          - api-good
+          - api-timeout
+          - api-502
+          - cdn-good
+          - cdn-fail
+          - domain-config
+
+  jm-redis:
+    image: redis:8.8.0-alpine@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --protected-mode
+      - "no"
+    ports:
+      - "127.0.0.1:${JM_TEST_REDIS_PORT:-6397}:6379"
+    tmpfs:
+      - /data:rw,noexec,nosuid,size=64m,mode=1777
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
+      start_period: 2s
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  jm-fixture-stats:

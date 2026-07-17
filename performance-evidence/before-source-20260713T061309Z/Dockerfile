@@ -1,7 +1,7 @@
 FROM php:8.3-cli-alpine
 
 WORKDIR /app
-ARG JM_API_VERSION=2026.07.13.2
+ARG JM_API_VERSION=2026.07.13.1
 ARG JM_API_REVISION=unknown
 ENV JM_API_VERSION=$JM_API_VERSION
 LABEL org.opencontainers.image.title="JM Comic Viewer API" \
@@ -18,8 +18,8 @@ RUN apk add --no-cache \
     && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS \
     && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
     && docker-php-ext-install -j"$(nproc)" curl gd mbstring \
-    && pecl install apcu redis-6.3.0 \
-    && docker-php-ext-enable apcu redis \
+    && pecl install apcu \
+    && docker-php-ext-enable apcu \
     && apk del .build-deps \
     && chown -R www-data:www-data /app
 

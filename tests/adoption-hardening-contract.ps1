@@ -7,7 +7,7 @@ $implementationPath = Join-Path $root 'docs\jmcomic-python-reference-adoption-im
 $source = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8
 $readme = Get-Content -LiteralPath $readmePath -Raw -Encoding UTF8
 $implementation = Get-Content -LiteralPath $implementationPath -Raw -Encoding UTF8
-$httpGetBody = [regex]::Match($source, 'public function get\(string \$url, array \$headers\): array\s*\{(?<body>[\s\S]*?)\n    \}\n\}').Groups['body'].Value
+$httpGetBody = [regex]::Match($source, 'public function get\(string \$url, array \$headers, int \$timeoutMs, \?int \$bodyLimitBytes = null\): HttpResult\s*\{(?<body>[\s\S]*?)\r?\n    \}\r?\n\}').Groups['body'].Value
 if ([string]::IsNullOrWhiteSpace($httpGetBody)) {
     throw 'Could not isolate JmHttpClient::get body'
 }
@@ -67,14 +67,14 @@ foreach ($snippet in @(
 }
 
 Assert-Contains $source 'function apiDomainDiagnostics' 'health diagnostics select active cached API domains when available'
-Assert-Matches $source 'apiDomainDiagnostics\(MemoryCache \$cache\)[\s\S]*?JmApiClient::normalizeApiDomains\(\$cache->get\(''api-domains''\)\)' 'domain diagnostics use the same API domain normalizer as requests'
-Assert-Matches $source '''domains''\s*=>\s*apiDomainDiagnostics\(\$memoryCache\)' 'health endpoint uses active domain diagnostics helper'
+Assert-Matches $source 'apiDomainDiagnostics\(MemoryCache \$cache, RequestContext \$context\)[\s\S]*?new DomainResolver\(\$context, \$cache\)' 'health diagnostics use the read-only domain resolver'
+Assert-Matches $source '''domains''\s*=>\s*apiDomainDiagnostics\(\$memoryCache, \$healthContext\)' 'health endpoint uses active domain diagnostics helper'
 Assert-Contains $source 'public static function normalizeApiDomains' 'API domain resolver exposes one normalizer for requests and diagnostics'
-Assert-Matches $source '\$cachedDomains\s*=\s*self::normalizeApiDomains\(\$cache->get\(''api-domains''\)\)' 'cached API domains are normalized before use'
-Assert-Matches $source '\$servers\s*=\s*self::normalizeApiDomains\(\$data\[''Server''\]\s*\?\?\s*null\)' 'remote API domains are normalized before cache/use'
+Assert-Matches $source 'validatedState[\s\S]*?JmApiClient::normalizeApiDomains\(\$value\[''domains''\]\s*\?\?\s*null\)' 'cached API domains are normalized before use'
+Assert-Matches $source 'decodeDomainConfig[\s\S]*?JmApiClient::normalizeApiDomains\(\$decoded\[''Server''\]\s*\?\?\s*null\)' 'remote API domains are normalized before cache/use'
 Assert-Matches $source 'markFailure\(string \$domain,\s*bool \$hardFailure\s*=\s*true,\s*string \$kind\s*=\s*''unknown''' 'domain health records failure kind'
 Assert-Matches $source '\$failure->hardDomainFailure\(\)' 'api failure classifier decides whether to punish a domain'
-Assert-Matches $source 'ApiFailure::http\(\$statusCode\)' 'HTTP response status is classified before domain scoring'
+Assert-Matches $source 'ApiFailure::http\(\$result->status\)' 'structured HTTP response status is classified before domain scoring'
 Assert-Matches $source 'ApiFailure::business\(\$code' 'JM business errors are classified separately from domain failures'
 Assert-Matches $source 'ApiFailure::payloadJson\(' 'decrypted payload JSON failures are classified'
 Assert-Matches $source 'throw ApiFailure::publicException\(\$lastFailure\)' 'final API exception preserves classified failure'
@@ -92,16 +92,18 @@ foreach ($snippet in @(
     'stringList',
     'PayloadNormalizer::scalarString($data[''id''] ?? $fallbackAlbumId)',
     'PayloadNormalizer::listArray($data[''series''] ?? [])',
-    'PayloadNormalizer::listArray($data[''images''] ?? [])',
+    'normalizeChapterImages($data[''images''])',
     'PayloadNormalizer::scalarString($item[''id''] ?? $item[''aid''] ?? $item[''AID''] ?? '''')'
 )) {
     Assert-Contains $source $snippet $snippet
 }
 
 Assert-Matches $source 'JmAlbum::fromApiResponse\(\$resp\[''data''\],\s*\$jmid\)' 'album model falls back to requested jmid when upstream id is missing'
-Assert-Matches $source 'JmChapter::fromApiResponse\(\$resp\[''data''\],\s*\$scrambleId,\s*\$photoId\)' 'chapter model falls back to requested photo id when upstream id is missing'
+Assert-Matches $source 'JmChapter::fromApiResponse\(\$resp\[''data''\],\s*\$scrambleId,\s*\$photoId\)' 'chapter model validates against the requested photo id'
 Assert-Matches $source 'fromApiResponse\(array \$data,\s*string \$fallbackAlbumId' 'album fromApiResponse accepts fallback album id'
-Assert-Matches $source 'fromApiResponse\(array \$data,\s*string \$scrambleId,\s*string \$fallbackPhotoId' 'chapter fromApiResponse accepts fallback photo id'
+Assert-Matches $source 'fromApiResponse\(array \$data,\s*string \$scrambleId,\s*string \$requestedPhotoId' 'chapter fromApiResponse accepts the requested photo id validator input'
+Assert-Matches $source '\$responsePhotoId === null[\s\S]*?trim\(\$responsePhotoId\) === ''''[\s\S]*?\$responsePhotoId = \$requestedPhotoId' 'missing or empty upstream chapter id falls back to requested id'
+Assert-Matches $source '\$responsePhotoId !== \$requestedPhotoId' 'present upstream chapter id must match requested id'
 Assert-Contains $source 'isUnsupportedHomeSection(PayloadNormalizer::scalarString($section[''title''] ?? ''''))' 'promote section title is scalar-normalized'
 Assert-Contains $source '$itemId = PayloadNormalizer::scalarString($item[''id''] ?? $item[''aid''] ?? $item[''AID''] ?? '''')' 'promote item id is scalar-normalized'
 Assert-Contains $source 'PayloadNormalizer::scalarString($category[''id''] ?? '''')' 'weekly category id is scalar-normalized'
@@ -139,11 +141,25 @@ Assert-Matches $source 'addToExpiringSetAndCount[\s\S]*?zRemRangeByScore\(\$key,
 Assert-Matches $source 'addToExpiringSetAndCount[\s\S]*?zAdd\(\$key,\s*\(float\)\s*\$now,\s*\$member\)' 'distinct jmid guard stores last-seen timestamp per member'
 Assert-Matches $source 'addToExpiringSetAndCount[\s\S]*?zCard\(\$key\)' 'distinct jmid guard counts active distinct members'
 Assert-NotMatches $source 'addToExpiringSetAndCount[\s\S]*?sAdd\(\$key,\s*\$member\)' 'distinct jmid guard must not use a plain set with refreshed TTL'
-Assert-Contains $source 'private static function redisRateMember' 'Redis rate limiter uses collision-resistant zset members'
-Assert-Matches $source 'zAdd\(\$k,\s*\(float\)\s*\$now,\s*self::redisRateMember\(\)\)' 'Redis rate limiter does not derive zset member from current count'
-Assert-NotMatches $source '\$now \. ''.'' \. \(\$count \+ 1\)' 'Redis rate limiter member must not collide under concurrent same-count requests'
-Assert-Matches $source '\$oldestScore\s*=\s*\$oldest\s*\?\s*\(int\)\s*reset\(\$oldest\)\s*:\s*null' 'Redis retry-after uses zset score, not member key'
-Assert-NotMatches $source 'array_key_first\(\$oldest\)\s*\+\s*\$window' 'Redis retry-after must not calculate from zset member'
+$checkRateMatch = [regex]::Match($source, 'public function checkRate\(string \$key, int \$window, int \$max\): array\s*\{(?<body>[\s\S]*?)\r?\n    \}')
+if (-not $checkRateMatch.Success) { throw 'Could not isolate RedisStore::checkRate body' }
+$checkRateBody = $checkRateMatch.Groups['body'].Value
+foreach ($snippet in @(
+    'interface RedisAdapter',
+    'interface RedisAdapterFactory',
+    'final class RedisFailureCircuit',
+    'RATE_LIMIT_LUA',
+    'ZREMRANGEBYSCORE',
+    'ZCARD',
+    'ZRANGE',
+    'ZADD',
+    'EXPIRE'
+)) {
+    Assert-Contains $source $snippet "Redis atomic/lazy contract $snippet"
+}
+Assert-Matches $checkRateBody 'eval\(' 'Redis rate limiter executes one Lua EVAL'
+Assert-NotMatches $checkRateBody '->zRemRangeByScore|->zCard|->zRange|->zAdd|->expire' 'Redis rate limiter must not issue direct multi-command zset operations'
+Assert-Matches $source 'RATE_LIMIT_LUA[\s\S]*?if\s+count\s*>=\s*maxRequests[\s\S]*?return\s+\{0,\s*0,\s*retryAfter\}[\s\S]*?ZADD[\s\S]*?return\s+\{1,' 'Redis Lua performs conditional add and returns retry-after atomically'
 Assert-NotMatches $source 'checkBruteForce[\s\S]*?\$this->store->incr\(\$key,\s*600\)' 'brute force guard must count distinct jmids, not every request'
 Assert-Matches $source 'if\s*\(\$code\s*>=\s*500\)\s*\{[\s\S]*?safeErrorExtras\(' '5xx sendError extras are whitelisted'
 Assert-Contains $readme 'Numeric direct image requests validate chapter id format and page bounds, not album membership.' 'README documents direct image validation boundary'

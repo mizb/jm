@@ -1,0 +1,22 @@
+{
+  "status": "runtime_unavailable_source_recovered",
+  "recorded_at": "2026-07-13T14:14:19.8422102+08:00",
+  "source_recovered_at": "2026-07-17T06:14:53.1088557+08:00",
+  "reason": "The pre-change runtime benchmark was not executed before behavior changes. The exact source snapshot has since been recovered, but no same-condition runtime performance-before measurement exists yet.",
+  "required_next_step": "Run the recovered snapshot and current source with the same benchmark/helper versions, fixture, inputs, warm-up, PHP build, APCu size, worker count, resource limits, and network harness; do not report percentages until comparison evidence passes.",
+  "source_recovery": {
+    "path": "performance-evidence\\before-source-20260713T061309Z",
+    "manifest_sha256": "55187656E7446B8D9A897F9FF2AC55ECDBCF66819F440B108CFB7D52CF5F0FFD",
+    "authority_timestamp_utc": "2026-07-13T06:13:09.236Z",
+    "authority_session_log": "C:\\Users\\MZB\\.codex\\sessions\\2026\\07\\13\\rollout-2026-07-13T09-12-40-019f5908-8c1b-70e0-9429-b84f65d842bd.jsonl",
+    "authority_line": 3042,
+    "validation": "All four recovered file hashes match the authoritative snapshot; recovered index.php passes PHP 8.3.32 lint."
+  },
+  "pre_change_sha256": {
+    "index.php": "A88271DCD759CDB4992FB2C49C963441FDA7028201E991211CD4DE4B497A13ED",
+    "Dockerfile": "CC978373E4793F235B096F06FA5BF08D07FF6E1B88A88FAB95D699555B28F59A",
+    "docker-compose.yml": "6BA1D7615E6859CA8C4500579FAC1A9E7604EB25BAAE1885C6201EDB8339F5CE",
+    "docker-entrypoint.sh": "0E67AA6707C7E333920423DD43372AA3DBE9E0652E85CC958A5EB418CA043CDA"
+  },
+  "note": "This file and the recovered source are provenance evidence, not performance-before.json and not proof of a speedup."
+}

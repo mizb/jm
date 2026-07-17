@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "captured_date": "2026-07-17",
+  "route": "/?list=latest&page=1&format=min",
+  "conditions": {
+    "php_version": "8.3.32",
+    "runtime": "Windows PHP built-in server",
+    "actual_worker_count": 1,
+    "apcu_enabled": true,
+    "apcu_shm_size": "128M",
+    "memory_limit": "512M",
+    "proxy_or_jm_environment": "none",
+    "network": "same real external network, sequential after-before-after bracket",
+    "client_timeout_seconds": 180
+  },
+  "samples": [
+    {
+      "label": "after-bracket-a",
+      "captured_at_utc": "2026-07-16T22:19:45.3463141Z",
+      "source_sha256": "680AF5970DD5EC8A85C2D6F75F66ECA439F91D1DBB3FF476406CB0096B18FB7C",
+      "api_version": "2026.07.13.2",
+      "status": 502,
+      "elapsed_ms": 1149,
+      "request_id": "ead135aece335aca",
+      "upstream_attempts": 5,
+      "upstream_ms": 1091,
+      "deadline_exhausted": false
+    },
+    {
+      "label": "before-recovered",
+      "captured_at_utc": "2026-07-16T22:19:52.6214214Z",
+      "source_sha256": "A88271DCD759CDB4992FB2C49C963441FDA7028201E991211CD4DE4B497A13ED",
+      "api_version": "2026.07.13.1",
+      "status": 502,
+      "elapsed_ms": 6875,
+      "request_id": null,
+      "upstream_attempts": null,
+      "upstream_ms": null,
+      "deadline_exhausted": null,
+      "body_sha256": "D42250AD35B462862C9A9873E8C8D9655B86461B0052B224E3CECEE2EEA76D72"
+    },
+    {
+      "label": "after-bracket-b",
+      "captured_at_utc": "2026-07-16T22:19:53.7659588Z",
+      "source_sha256": "680AF5970DD5EC8A85C2D6F75F66ECA439F91D1DBB3FF476406CB0096B18FB7C",
+      "api_version": "2026.07.13.2",
+      "status": 502,
+      "elapsed_ms": 936,
+      "request_id": "6e678e5747eb28c2",
+      "upstream_attempts": 5,
+      "upstream_ms": 926,
+      "deadline_exhausted": false
+    }
+  ],
+  "interpretation": "The recovered pre-change failure path was slower than both current-version bracket samples under this one cold external-network observation.",
+  "limitations": [
+    "All samples ended in HTTP 502, so this is failure-path evidence only.",
+    "The external upstream and network were not controlled.",
+    "This is not the deterministic fixture benchmark and must not be used to report an overall speedup percentage.",
+    "The pre-change source does not expose the current request diagnostic headers, so its attempt and upstream timing fields are unavailable."
+  ]
+}

@@ -35,6 +35,7 @@ function Assert-NotContains {
 
 $dockerfile = Read-ProjectFile 'Dockerfile'
 $compose = Read-ProjectFile 'docker-compose.yml'
+$testCompose = Read-ProjectFile 'docker-compose.test.yml'
 $readme = Read-ProjectFile 'README.md'
 $runtimeVerify = Read-ProjectFile 'scripts/runtime-verify.ps1'
 $entrypoint = Read-ProjectFile 'docker-entrypoint.sh'
@@ -44,7 +45,7 @@ $advancedDesign = Read-ProjectFile 'docs\advanced-reader-optimization-design.md'
 $advancedPrompt = Read-ProjectFile 'docs\advanced-reader-optimization-ai-prompt.md'
 $apiPrompt = Read-ProjectFile 'docs\ai-delivery-prompt.md'
 
-$expectedApiVersion = '2026.07.13.1'
+$expectedApiVersion = '2026.07.13.2'
 
 Assert-Contains $dockerfile 'pecl\s+install\s+apcu' 'APCu installation'
 Assert-Contains $dockerfile 'docker-php-ext-enable\s+apcu' 'APCu enablement'
@@ -71,8 +72,11 @@ Assert-Contains $source '''app_version''' 'health endpoint exposes app version'
 Assert-Contains $compose '"8088:8088"' 'compose maps 8088 to 8088'
 Assert-Contains $compose "JM_API_VERSION:\s*`"$expectedApiVersion`"" 'compose environment exposes current JM API version'
 Assert-Contains $compose 'JM_PREFETCH_PAGES' 'prefetch environment setting'
-Assert-Contains $compose 'JM_PREFETCH_PAGES:\s*"10"' 'prefetch defaults to 10 pages'
-Assert-Contains $compose 'JM_PREFETCH_HIGH_PRIORITY_PAGES:\s*"2"' 'high priority prefetch defaults to two pages'
+Assert-Contains $compose 'JM_PREFETCH_PAGES:\s*"\$\{JM_PREFETCH_PAGES:-10\}"' 'prefetch defaults to 10 pages and accepts an override'
+Assert-Contains $compose 'JM_PREFETCH_HIGH_PRIORITY_PAGES:\s*"\$\{JM_PREFETCH_HIGH_PRIORITY_PAGES:-2\}"' 'high priority prefetch defaults to two pages and accepts an override'
+Assert-Contains $compose 'JM_PREFETCH_WALL_BUDGET_MS:\s*"\$\{JM_PREFETCH_WALL_BUDGET_MS:-5000\}"' 'prefetch wall budget defaults to five seconds and accepts an override'
+Assert-Contains $compose 'JM_PREFETCH_BYTE_BUDGET:\s*"\$\{JM_PREFETCH_BYTE_BUDGET:-16777216\}"' 'prefetch byte budget defaults to 16 MiB and accepts an override'
+Assert-Contains $compose 'JM_PREFETCH_MAX_ACTIVE:\s*"\$\{JM_PREFETCH_MAX_ACTIVE:-2\}"' 'prefetch global active slots default to two and accepts an override'
 Assert-Contains $compose 'JM_PREFETCH_MIN_FREE_BYTES:\s*"33554432"' 'prefetch free-memory waterline bytes'
 Assert-Contains $compose 'JM_PREFETCH_MIN_FREE_RATIO:\s*"15"' 'prefetch free-memory waterline ratio'
 Assert-Contains $compose 'JM_PAGE_CACHE_TTL' 'page cache ttl environment setting'
@@ -87,7 +91,31 @@ Assert-Contains $compose 'JM_NEXT_CHAPTER_PREFETCH_PAGES:\s*"2"' 'next chapter p
 Assert-Contains $compose 'JM_DOMAIN_COOLDOWN_SECONDS:\s*"120"' 'domain health cooldown'
 Assert-Contains $compose 'JM_DOMAIN_STATS_TTL:\s*"21600"' 'domain health stats TTL'
 Assert-Contains $compose 'PHP_CLI_SERVER_WORKERS:\s*"10"' 'PHP CLI server workers setting'
+Assert-Contains $compose 'JM_REQUEST_BUDGET_MS:\s*"\$\{JM_REQUEST_BUDGET_MS:-12000\}"' 'shared upstream request budget default and override'
+Assert-Contains $compose 'JM_MAX_UPSTREAM_ATTEMPTS:\s*"\$\{JM_MAX_UPSTREAM_ATTEMPTS:-6\}"' 'shared upstream attempt limit default and override'
+Assert-Contains $compose 'JM_LIST_CACHE_TTL:\s*"\$\{JM_LIST_CACHE_TTL:-60\}"' 'list source cache TTL default and override'
+Assert-Contains $compose 'JM_SEARCH_CACHE_TTL:\s*"\$\{JM_SEARCH_CACHE_TTL:-30\}"' 'search source cache TTL default and override'
+Assert-Contains $compose 'JM_WEEKLY_LIST_CACHE_TTL:\s*"\$\{JM_WEEKLY_LIST_CACHE_TTL:-60\}"' 'weekly list source cache TTL default and override'
+Assert-Contains $compose 'JM_ALBUM_CACHE_TTL:\s*"\$\{JM_ALBUM_CACHE_TTL:-45\}"' 'album metadata cache TTL default and override'
+Assert-Contains $compose 'JM_WEEK_DEFAULTS_CACHE_TTL:\s*"\$\{JM_WEEK_DEFAULTS_CACHE_TTL:-600\}"' 'weekly defaults fresh TTL default and override'
+Assert-Contains $compose 'JM_WEEK_DEFAULTS_STALE_TTL:\s*"\$\{JM_WEEK_DEFAULTS_STALE_TTL:-3600\}"' 'weekly defaults stale TTL default and override'
+Assert-Contains $compose 'JM_CACHE_FILL_WAIT_MS:\s*"\$\{JM_CACHE_FILL_WAIT_MS:-750\}"' 'metadata cache loser wait default and override'
+Assert-Contains $compose 'JM_CACHE_FILL_LOCK_TTL:\s*"\$\{JM_CACHE_FILL_LOCK_TTL:-15\}"' 'metadata cache fill lease default and override'
+Assert-Contains $compose 'JM_DOMAIN_FRESH_TTL:\s*"\$\{JM_DOMAIN_FRESH_TTL:-86400\}"' 'domain fresh TTL default and override'
+Assert-Contains $compose 'JM_DOMAIN_STALE_TTL:\s*"\$\{JM_DOMAIN_STALE_TTL:-86400\}"' 'domain stale TTL default and override'
+Assert-Contains $compose 'JM_DOMAIN_REFRESH_DEFERRED:\s*"\$\{JM_DOMAIN_REFRESH_DEFERRED:-1\}"' 'deferred domain refresh default and override'
+Assert-Contains $compose 'JM_DOMAIN_SOURCE_TIMEOUT_MS:\s*"\$\{JM_DOMAIN_SOURCE_TIMEOUT_MS:-1500\}"' 'domain source timeout default and override'
+Assert-Contains $compose 'JM_DOMAIN_REFRESH_BUDGET_MS:\s*"\$\{JM_DOMAIN_REFRESH_BUDGET_MS:-3000\}"' 'domain refresh total budget default and override'
+Assert-Contains $compose 'JM_DOMAIN_REFRESH_FAILURE_TTL:\s*"\$\{JM_DOMAIN_REFRESH_FAILURE_TTL:-60\}"' 'domain refresh failure suppression default and override'
+Assert-Contains $compose 'JM_IMAGE_MAX_COMPRESSED_BYTES:\s*"\$\{JM_IMAGE_MAX_COMPRESSED_BYTES:-33554432\}"' 'compressed image byte cap default and override'
+Assert-Contains $compose 'JM_IMAGE_MAX_PIXELS:\s*"\$\{JM_IMAGE_MAX_PIXELS:-80000000\}"' 'decoded image pixel cap default and override'
+Assert-Contains $compose 'JM_CDN_EPOCH:\s*"\$\{JM_CDN_EPOCH:-1\}"' 'stable cover CDN epoch default and override'
+Assert-Contains $compose 'JM_TRUSTED_PROXY_CIDRS:\s*"\$\{JM_TRUSTED_PROXY_CIDRS:-\}"' 'forwarded headers are untrusted by default and accept an override'
 Assert-NotContains $compose '/app/cache' 'file cache volume'
+Assert-NotContains $compose 'JM_TEST_' 'production compose test-only variables'
+Assert-Contains $testCompose 'PHP_CLI_SERVER_WORKERS:\s*"12"' 'test API uses enough CLI workers for prefetch concurrency'
+Assert-Contains $testCompose 'JM_TEST_PREFETCH_STATS_DIR' 'test compose enables direct prefetch owner stats'
+Assert-Contains $testCompose 'jm-fixture-stats:/tmp/jm-fixture-stats' 'API and fixture share owner stats volume'
 Assert-NotContains $dockerfile '8080' 'stale Dockerfile port 8080'
 Assert-NotContains $compose '8080' 'stale compose port 8080'
 Assert-NotContains $readme '8080' 'stale README port 8080'
@@ -110,6 +138,35 @@ Assert-Contains $readme 'X-JM-Prefetch' 'README documents prefetch response head
 Assert-Contains $readme 'X-JM-Cache-Store' 'README documents cache store response header'
 Assert-Contains $readme 'JM_PREFETCH_MIN_FREE_BYTES' 'README documents prefetch memory waterline'
 Assert-Contains $readme 'JM_DOMAIN_COOLDOWN_SECONDS' 'README documents domain health cooldown'
+$requiredReadmeControls = @(
+    'JM_REQUEST_BUDGET_MS',
+    'JM_MAX_UPSTREAM_ATTEMPTS',
+    'JM_LIST_CACHE_TTL',
+    'JM_SEARCH_CACHE_TTL',
+    'JM_WEEKLY_LIST_CACHE_TTL',
+    'JM_ALBUM_CACHE_TTL',
+    'JM_WEEK_DEFAULTS_CACHE_TTL',
+    'JM_WEEK_DEFAULTS_STALE_TTL',
+    'JM_DOMAIN_FRESH_TTL',
+    'JM_DOMAIN_STALE_TTL',
+    'JM_DOMAIN_REFRESH_DEFERRED',
+    'JM_PREFETCH_WALL_BUDGET_MS',
+    'JM_PREFETCH_BYTE_BUDGET',
+    'JM_PREFETCH_MAX_ACTIVE',
+    'JM_IMAGE_MAX_COMPRESSED_BYTES',
+    'JM_IMAGE_MAX_PIXELS',
+    'JM_TRUSTED_PROXY_CIDRS'
+)
+foreach ($control in $requiredReadmeControls) {
+    Assert-Contains $readme ([regex]::Escape($control)) "README documents $control"
+}
+Assert-Contains $readme 'JM_LIST_CACHE_TTL=0' 'README provides immediate list cache rollback'
+Assert-Contains $readme 'JM_ALBUM_CACHE_TTL=0' 'README provides immediate album cache rollback'
+Assert-Contains $readme 'JM_DOMAIN_REFRESH_DEFERRED=0' 'README provides immediate domain refresh rollback'
+Assert-Contains $readme 'JM_PREFETCH_PAGES=0' 'README provides immediate prefetch rollback'
+Assert-Contains $readme 'docker compose build --no-cache' 'README provides clean image build command'
+Assert-Contains $readme 'performance-baseline\.ps1' 'README provides performance measurement command'
+Assert-Contains $readme '\u7248\u672c\u56de\u9000|version rollback|version/commit rollback' 'README distinguishes correctness rollback from tuning controls'
 $redisCacheAcceleration = -join @([char]0x7F13, [char]0x5B58, [char]0x52A0, [char]0x901F)
 Assert-NotContains $readme $redisCacheAcceleration 'README must not describe Redis as cache acceleration'
 
@@ -118,6 +175,10 @@ Assert-Contains $advancedDesign 'list=promote' 'advanced API design documents pr
 Assert-Contains $advancedDesign 'list=weekly' 'advanced API design documents weekly list mode'
 Assert-Contains $advancedPrompt $expectedApiVersion 'advanced AI prompt documents current API version'
 Assert-Contains $apiPrompt $expectedApiVersion 'AI delivery prompt documents current API version'
+Assert-Contains $apiPrompt 'D:\\jm\\jmcomic-api-main' 'AI delivery prompt uses the current API path'
+Assert-NotContains $apiPrompt 'D:\\jm\\jm-boom-master\\jmcomic-api-main' 'AI delivery prompt has no obsolete API path'
+Assert-NotContains $advancedDesign 'D:\\jm\\jm-boom-master\\jmcomic-api-main' 'advanced design has no obsolete API path'
+Assert-NotContains $advancedPrompt 'D:\\jm\\jm-boom-master\\jmcomic-api-main' 'advanced AI prompt has no obsolete API path'
 
 Assert-Contains $runtimeVerify '& docker compose @Arguments' 'runtime verifier invokes docker compose through a checked wrapper'
 Assert-Contains $runtimeVerify 'Invoke-DockerCompose -Arguments @\(''build''\)' 'runtime verifier builds compose image'
@@ -143,10 +204,15 @@ Assert-Contains $runtimeVerify 'X-JM-Cache-Store' 'runtime verifier checks cache
 Assert-Contains $runtimeVerify 'Assert-HeaderEquals \$firstImage.Headers ''X-JM-Cache'' ''MISS''' 'runtime verifier requires first image cache miss'
 Assert-Contains $runtimeVerify 'Assert-HeaderEquals \$secondImage.Headers ''X-JM-Cache'' ''HIT''' 'runtime verifier requires second image cache hit'
 Assert-Contains $runtimeVerify 'prefetch=0' 'runtime verifier checks prefetch can be disabled'
-Assert-Contains $runtimeVerify 'N\+1 through N\+10' 'runtime verifier documents default prefetch range'
+Assert-Contains $runtimeVerify 'bounded HIT subset' 'runtime verifier accepts the budget-bounded prefetch subset'
 Assert-Contains $runtimeVerify 'Start-Sleep -Seconds \$PrefetchWaitSeconds' 'runtime verifier waits for shutdown prefetch before probing target pages'
-Assert-Contains $runtimeVerify 'Assert-HeaderEquals \$prefetchResponse.Headers ''X-JM-Cache'' ''HIT''' 'runtime verifier checks prefetched pages with a single non-mutating assertion'
-Assert-Contains $runtimeVerify 'Try-HeadImage -ImagePage \$candidatePage -DisablePrefetch \$true' 'runtime verifier disables cascading prefetch while probing prefetched pages'
+Assert-Contains $runtimeVerify 'Try-GetImage -ImagePage \$candidatePage -DisablePrefetch \$true' 'runtime verifier disables cascading prefetch while probing prefetched pages'
+Assert-Contains $runtimeVerify 'prefetch.aggregate' 'runtime verifier checks prefetch stats consistency'
+Assert-Contains $runtimeVerify 'page_count -ge 4' 'runtime verifier requires confirmed adjacent page3+ inputs'
+Assert-Contains $runtimeVerify 'confirmed next_chapter' 'runtime verifier requires a real next chapter for prefetch=0'
+Assert-Contains $runtimeVerify 'X-JM-Prefetch'' ''disabled' 'runtime verifier proves prefetch=0 exits before scheduling'
+Assert-NotContains $runtimeVerify '-Method\s+''HEAD''' 'runtime verifier must not use HEAD for decoded image work'
+Assert-NotContains $runtimeVerify 'Write-Warning "Could not check prefetch=0' 'runtime verifier must not turn an out-of-range prefetch=0 case into a zero-assertion pass'
 Assert-NotContains $runtimeVerify 'Wait-ImageCacheHit' 'runtime verifier must not self-warm prefetch pages by polling'
 Assert-Contains $runtimeVerify '/app/cache' 'runtime verifier checks no file cache volume'
 Assert-Contains $runtimeVerify 'find /app -type f' 'runtime verifier checks no decoded image files are written'
