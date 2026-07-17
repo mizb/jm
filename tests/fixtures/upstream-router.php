@@ -172,7 +172,7 @@ function listItems(int $count): array
 function weeklyListItems(string $categoryId, string $typeId): array
 {
     $categoryId = preg_match('/^\d+$/', $categoryId) === 1 ? $categoryId : '0';
-    $typeId = preg_match('/^\d+$/', $typeId) === 1 ? $typeId : '0';
+    $typeId = preg_match('/^(?:\d+|[A-Za-z][A-Za-z0-9_-]{0,31})$/', $typeId) === 1 ? $typeId : '0';
     $idWord = unpack('Nvalue', substr(hash('sha256', $categoryId . ':' . $typeId, true), 0, 4));
     $id = '9' . str_pad((string) ($idWord['value'] ?? 0), 10, '0', STR_PAD_LEFT);
     return [[
@@ -470,8 +470,8 @@ $albumName = match ($scenario) {
     default => 'Fixture Album',
 };
 $weekDefaults = match ($scenario) {
-    'week-default-v1' => ['category_id' => '11', 'type_id' => '21'],
-    'week-default-v2' => ['category_id' => '12', 'type_id' => '22'],
+    'week-default-v1' => ['category_id' => '11', 'type_id' => 'hanman'],
+    'week-default-v2' => ['category_id' => '12', 'type_id' => 'another'],
     'week-default-invalid' => ['category_id' => 'not-an-id', 'type_id' => '22'],
     default => ['category_id' => '1', 'type_id' => '1'],
 };

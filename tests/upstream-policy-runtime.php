@@ -90,7 +90,7 @@ function context(int $budgetMs = 1500, int $attempts = 6): RequestContext
     return RequestContext::forTest('policy-test', $budgetMs, $attempts);
 }
 
-assertSameValue(10, JmConfig::DEFAULT_MAX_UPSTREAM_ATTEMPTS, 'production default permits two bounded domain passes');
+assertSameValue(15, JmConfig::DEFAULT_MAX_UPSTREAM_ATTEMPTS, 'production default preserves three bounded attempts per domain');
 
 function transientRequestId(): string
 {
@@ -122,7 +122,7 @@ function assertNetworkFailover(int $errno, string $category): void
     assertSameValue(['category' => $category], $client->callJson('/latest', ['page' => '0'])['data'], $category . ' failover payload');
     assertSameValue(2, $transport->calls, $category . ' failover attempts');
     assertSameValue('primary.test', (string) parse_url($transport->seenUrls[0], PHP_URL_HOST), $category . ' starts on primary');
-    assertSameValue('secondary.test', (string) parse_url($transport->seenUrls[1], PHP_URL_HOST), $category . ' switches to secondary');
+    assertSameValue('primary.test', (string) parse_url($transport->seenUrls[1], PHP_URL_HOST), $category . ' retries the primary');
 }
 
 $connectThenSuccess = new SequenceTransport(
@@ -132,11 +132,11 @@ $connectThenSuccess = new SequenceTransport(
 $ctx = context();
 $client = JmApiClient::forTest($ctx, $connectThenSuccess, ['https://primary.test', 'https://secondary.test']);
 $decoded = $client->callJson('/latest', ['page' => '0']);
-assertSameValue(['items' => []], $decoded['data'], 'connect failure switches domain and succeeds');
+assertSameValue(['items' => []], $decoded['data'], 'connect failure retries the primary and succeeds');
 assertSameValue(2, $connectThenSuccess->calls, 'connect failure attempt count');
 assertSameValue(2, $ctx->diagnostics()['upstream_attempts'], 'context attempt count');
 assertSameValue('primary.test', (string) parse_url($connectThenSuccess->seenUrls[0], PHP_URL_HOST), 'connect first domain');
-assertSameValue('secondary.test', (string) parse_url($connectThenSuccess->seenUrls[1], PHP_URL_HOST), 'connect switches to secondary domain');
+assertSameValue('primary.test', (string) parse_url($connectThenSuccess->seenUrls[1], PHP_URL_HOST), 'connect retries the primary domain');
 assertNetworkFailover(CURLE_COULDNT_RESOLVE_HOST, 'dns');
 assertNetworkFailover(CURLE_SSL_CONNECT_ERROR, 'tls');
 assertNetworkFailover(CURLE_OPERATION_TIMEDOUT, 'timeout');
@@ -159,7 +159,7 @@ $client = JmApiClient::forTest(
 assertSameValue(
     ['recovered' => true],
     $client->callJson('/latest', ['page' => '0'])['data'],
-    'all-domain transient failures use the sixth bounded attempt to retry the best domain',
+    'per-domain transient failures use the sixth bounded attempt on the secondary domain',
 );
 assertSameValue(6, $allDomainsTransientThenPrimaryRecovers->calls, 'bounded all-domain recovery attempt count');
 $allDomainRecoveryHosts = array_map(
@@ -167,29 +167,44 @@ $allDomainRecoveryHosts = array_map(
     $allDomainsTransientThenPrimaryRecovers->seenUrls,
 );
 assertSameValue(
-    ['primary.test', 'secondary.test', 'one.test', 'two.test', 'three.test', 'primary.test'],
+    ['primary.test', 'primary.test', 'primary.test', 'secondary.test', 'secondary.test', 'secondary.test'],
     $allDomainRecoveryHosts,
-    'network failures rotate through every domain before retrying the best domain',
+    'network failures preserve three bounded attempts per domain',
 );
 
-$twoBoundedDomainPassesThenRecover = new SequenceTransport(
+$fifteenAttemptCompatibilityWindow = new SequenceTransport(
     ...array_merge(
-        array_fill(0, 9, fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'transient TLS failure')),
-        [fn(string $url, array $headers, int $timeoutMs): HttpResult => result(true, encryptedTestEnvelope(['second_pass' => true], $headers), 200)],
+        array_fill(0, 14, fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'transient TLS failure')),
+        [fn(string $url, array $headers, int $timeoutMs): HttpResult => result(true, encryptedTestEnvelope(['compatibility_window' => true], $headers), 200)],
     ),
 );
-$ctx = context(1500, 10);
+$ctx = context(1500, 15);
 $client = JmApiClient::forTest(
     $ctx,
-    $twoBoundedDomainPassesThenRecover,
+    $fifteenAttemptCompatibilityWindow,
     ['https://primary.test', 'https://secondary.test', 'https://one.test', 'https://two.test', 'https://three.test'],
 );
 assertSameValue(
-    ['second_pass' => true],
+    ['compatibility_window' => true],
     $client->callJson('/latest', ['page' => '0'])['data'],
-    'transient failures may use a second domain pass without exceeding ten attempts',
+    'transient failures may recover on the fifteenth bounded compatibility attempt',
 );
-assertSameValue(10, $twoBoundedDomainPassesThenRecover->calls, 'two-pass recovery remains bounded to ten attempts');
+assertSameValue(15, $fifteenAttemptCompatibilityWindow->calls, 'compatibility recovery remains bounded to fifteen attempts');
+$compatibilityHosts = array_map(
+    static fn(string $url): string => (string) parse_url($url, PHP_URL_HOST),
+    $fifteenAttemptCompatibilityWindow->seenUrls,
+);
+assertSameValue(
+    [
+        'primary.test', 'primary.test', 'primary.test',
+        'secondary.test', 'secondary.test', 'secondary.test',
+        'one.test', 'one.test', 'one.test',
+        'two.test', 'two.test', 'two.test',
+        'three.test', 'three.test', 'three.test',
+    ],
+    $compatibilityHosts,
+    'fifteen-attempt compatibility window uses three attempts per ordered domain',
+);
 
 $allScrambleDomainsTransientThenPrimaryRecovers = new SequenceTransport(
     fn(string $url, array $headers, int $timeoutMs): HttpResult => result(false, '', 0, [], CURLE_SSL_CONNECT_ERROR, 'primary transient TLS failure'),
@@ -208,9 +223,18 @@ $client = JmApiClient::forTest(
 assertSameValue(
     '220981',
     $client->fetchScrambleId('350234'),
-    'scramble uses the sixth bounded attempt after every domain has one transient failure',
+    'scramble uses the sixth bounded attempt on the secondary domain',
 );
 assertSameValue(6, $allScrambleDomainsTransientThenPrimaryRecovers->calls, 'bounded scramble recovery attempt count');
+$scrambleRecoveryHosts = array_map(
+    static fn(string $url): string => (string) parse_url($url, PHP_URL_HOST),
+    $allScrambleDomainsTransientThenPrimaryRecovers->seenUrls,
+);
+assertSameValue(
+    ['primary.test', 'primary.test', 'primary.test', 'secondary.test', 'secondary.test', 'secondary.test'],
+    $scrambleRecoveryHosts,
+    'scramble network failures preserve three bounded attempts per domain',
+);
 
 $retry502 = new SequenceTransport(
     fn(string $url, array $headers, int $timeoutMs): HttpResult => result(true, 'bad gateway', 502),
@@ -223,7 +247,7 @@ assertSameValue(['ok' => true], $client->callJson('/latest', ['page' => '0'])['d
 assertSameValue(3, $retry502->calls, 'primary retries once before secondary');
 assertSameValue('primary.test', (string) parse_url($retry502->seenUrls[0], PHP_URL_HOST), '502 first primary attempt');
 assertSameValue('primary.test', (string) parse_url($retry502->seenUrls[1], PHP_URL_HOST), '502 second primary attempt');
-assertSameValue('secondary.test', (string) parse_url($retry502->seenUrls[2], PHP_URL_HOST), '502 third attempt switches domain');
+assertSameValue('primary.test', (string) parse_url($retry502->seenUrls[2], PHP_URL_HOST), '502 third attempt remains on primary');
 
 foreach (['seconds', 'date', 'invalid'] as $label) {
     $retryAfter = match ($label) {
@@ -422,6 +446,35 @@ assertSameValue(2, $imageFailover->calls, 'test CDN failover attempts');
 assertSameValue('primary.test', (string) parse_url($imageFailover->seenUrls[0], PHP_URL_HOST), 'test CDN first base URL');
 assertSameValue('secondary.test', (string) parse_url($imageFailover->seenUrls[1], PHP_URL_HOST), 'test CDN fallback base URL');
 putenv('JM_TEST_CDN_BASE_URLS');
+
+$weekDefaultsNormalizer = new ReflectionMethod(JmService::class, 'normalizeWeekDefaultsPayload');
+$weekDefaultsNormalizer->setAccessible(true);
+$realWeekDefaults = ['category_id' => '249', 'type_id' => 'hanman'];
+assertSameValue(
+    $realWeekDefaults,
+    $weekDefaultsNormalizer->invoke(null, [
+        'categories' => [['id' => '249', 'title' => 'category']],
+        'type' => [['id' => 'hanman', 'title' => 'type']],
+    ]),
+    'real upstream alphanumeric weekly type id is accepted',
+);
+$weekEntryValidator = new ReflectionMethod(JmService::class, 'validatedWeekDefaultsEntry');
+$weekEntryValidator->setAccessible(true);
+$realWeekEntry = [
+    'value' => $realWeekDefaults,
+    'fetched_at' => 1_700_000_000,
+    'fresh_until' => 1_700_000_060,
+    'stale_until' => 1_700_000_120,
+];
+assertSameValue(
+    $realWeekEntry,
+    $weekEntryValidator->invoke(null, $realWeekEntry, 60, 60),
+    'cached alphanumeric weekly type id remains valid',
+);
+assertSameValue('hanman', normalizeOptionalWeeklyId('hanman', true), 'weekly type slug query is accepted');
+assertThrows(fn() => normalizeOptionalWeeklyId('hanman'), 'weekly category slug is rejected');
+assertThrows(fn() => normalizeOptionalWeeklyId('bad/type', true), 'weekly type path separator is rejected');
+assertThrows(fn() => normalizeOptionalWeeklyId(str_repeat('a', 33), true), 'overlong weekly type slug is rejected');
 
 if (function_exists('apcu_enabled') && apcu_enabled()) {
     $leaseCache = new MemoryCache();

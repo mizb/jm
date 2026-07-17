@@ -26,7 +26,7 @@ docker compose up -d --build
 
 ```text
 ghcr.io/<你的GitHub用户名>/<仓库名>:latest
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.2
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.4
 ```
 
 如果要直接使用 GHCR 镜像，可以把 `docker-compose.yml` 中的 `build` 删除，并把 `image` 改成你的镜像名：
@@ -39,9 +39,9 @@ services:
     ports:
       - "8088:8088"
     environment:
-      JM_API_VERSION: "2026.07.17.2"
+      JM_API_VERSION: "2026.07.17.4"
       JM_REQUEST_BUDGET_MS: "12000"
-      JM_MAX_UPSTREAM_ATTEMPTS: "10"
+      JM_MAX_UPSTREAM_ATTEMPTS: "15"
       JM_LIST_CACHE_TTL: "60"
       JM_SEARCH_CACHE_TTL: "30"
       JM_WEEKLY_LIST_CACHE_TTL: "60"
@@ -106,7 +106,7 @@ docker image inspect ghcr.io/<你的GitHub用户名>/<仓库名>:latest --format
 如果想完全避免 `latest` 缓存误判，可以把 compose 里的镜像固定为：
 
 ```text
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.2
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.4
 ```
 
 启动后检查服务：
@@ -129,7 +129,7 @@ docker logs jmcomic-api
 看到类似下面这行，就能判断容器加载的是哪一版：
 
 ```text
-JM API version 2026.07.17.2
+JM API version 2026.07.17.4
 ```
 
 `health=1` 会返回顶层 `version` 和 `diagnostics.app_version`。所有响应也会带 `X-JM-API-Version` 头，所以直接 `php -S` 和 Docker 启动都能通过接口确认当前运行版本。
@@ -183,7 +183,7 @@ curl "http://localhost:8088/?list=popular&page=1"
 curl "http://localhost:8088/?list=promote&page=1"
 
 # 原版每周推荐/每周必看
-curl "http://localhost:8088/?list=weekly&category_id=1&type_id=1&page=1"
+curl "http://localhost:8088/?list=weekly&category_id=249&type_id=hanman&page=1"
 
 # 搜索书名
 curl "http://localhost:8088/?search=董卓&page=1"
@@ -217,8 +217,8 @@ curl "http://localhost:8088/?search=董卓&page=1"
 | `order` | `new` | 仅用于 `popular`：`new`、`mv` 或 `tf`；非法值回退为 `new` |
 | `o` | `mv` | `order` 的兼容别名；同时传入时 `order` 优先 |
 | `section` | `0` | 推荐分区 ID，默认 `0` |
-| `category_id` | `1` | 每周推荐分类 ID；不传则自动读取原版默认分类 |
-| `type_id` | `1` | 每周推荐类型 ID；不传则自动读取原版默认类型 |
+| `category_id` | `249` | 每周推荐分类 ID（1～20 位数字）；不传则自动读取原版默认分类 |
+| `type_id` | `hanman` | 每周推荐类型 ID；兼容旧数字或安全字母 slug（当前上游含 `hanman / another / manga`）；不传则自动读取原版默认类型 |
 
 ```
 GET /?list=latest&page=1
@@ -382,9 +382,9 @@ GET /?jmid=350234&chapter=413446
 {
   "code": 200,
   "success": true,
-  "version": "2026.07.17.2",
+  "version": "2026.07.17.4",
   "diagnostics": {
-    "app_version": "2026.07.17.2",
+    "app_version": "2026.07.17.4",
     "php": "8.5.7",
     "apcu": true,
     "apcu_details": {
@@ -502,7 +502,7 @@ Redis 不可用时优雅降级 — 不限流。
 ```
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
-X-JM-API-Version: 2026.07.17.2
+X-JM-API-Version: 2026.07.17.4
 X-JM-Cache: HIT|MISS
 X-JM-Image-Codec: webp|jpeg|gif|png|original
 X-JM-Singleflight: hit|owner|hit-after-wait|timeout|disabled
@@ -557,7 +557,7 @@ API 域名请求路径只读取 APCu 中的 fresh/stale 条目或内置 HTTPS fa
 | 变量 | 默认值 | `0` / 空值语义与风险 |
 |---|---:|---|
 | `JM_REQUEST_BUDGET_MS` | `12000` | 不接受 0；单个业务请求共享的上游总预算 |
-| `JM_MAX_UPSTREAM_ATTEMPTS` | `10` | 不接受 0；同一业务请求最多对五个域名进行两轮快速尝试，仍受 12 秒总预算约束 |
+| `JM_MAX_UPSTREAM_ATTEMPTS` | `15` | 不接受 0；按健康顺序每域最多三次瞬态故障重试，生产重试间隔 300ms，仍受 12 秒总预算约束 |
 | `JM_LIST_CACHE_TTL` | `60` | `0` 关闭 latest/popular/promote 源页缓存，上游调用会增加 |
 | `JM_SEARCH_CACHE_TTL` | `30` | `0` 关闭搜索源页缓存 |
 | `JM_WEEKLY_LIST_CACHE_TTL` | `60` | `0` 关闭 weekly filter 源页缓存 |

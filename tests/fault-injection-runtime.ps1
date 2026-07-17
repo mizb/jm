@@ -424,7 +424,7 @@ function Invoke-FixtureResetFailureSelfTest {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         throw 'Fixture reset failure self-test requires Windows file deletion semantics.'
     }
-    if (-not (Test-Path -LiteralPath $PhpPath -PathType Leaf)) {
+    if ([string]::IsNullOrWhiteSpace($PhpPath) -or -not (Test-Path -LiteralPath $PhpPath -PathType Leaf)) {
         throw 'Fixture reset failure self-test requires -PhpPath pointing to php.exe.'
     }
 
@@ -550,7 +550,7 @@ if ($FixtureResetSelfTest) {
 }
 
 function Invoke-BootstrapDiagnosticsSelfTest {
-    if (-not (Test-Path -LiteralPath $PhpPath -PathType Leaf)) {
+    if ([string]::IsNullOrWhiteSpace($PhpPath) -or -not (Test-Path -LiteralPath $PhpPath -PathType Leaf)) {
         throw 'Bootstrap diagnostics self-test requires -PhpPath pointing to php.exe.'
     }
     $script:BaseUrl = "http://127.0.0.1:$LocalApiPort"
@@ -599,10 +599,10 @@ if ($BootstrapDiagnosticsSelfTest) {
     return
 }
 function Invoke-LocalListCacheVerification {
-    if (-not (Test-Path -LiteralPath $PhpPath -PathType Leaf)) {
+    if ([string]::IsNullOrWhiteSpace($PhpPath) -or -not (Test-Path -LiteralPath $PhpPath -PathType Leaf)) {
         throw 'Local list-cache verification requires -PhpPath pointing to php.exe.'
     }
-    if (-not (Test-Path -LiteralPath $ApcuExtension -PathType Leaf)) {
+    if ([string]::IsNullOrWhiteSpace($ApcuExtension) -or -not (Test-Path -LiteralPath $ApcuExtension -PathType Leaf)) {
         throw 'Local list-cache verification requires -ApcuExtension pointing to php_apcu.dll.'
     }
     if ($LocalApiPort -eq $LocalFixturePort) {
@@ -836,7 +836,7 @@ function Invoke-LocalListCacheVerification {
             $invalidWeekDefaults = @(1..2 | ForEach-Object {
                 Invoke-CapturedRequest (Api-Url 'list=weekly&page=1&format=min' 'week-default-invalid' $runId)
             })
-            Assert-True (($invalidWeekDefaults | Where-Object Status -lt 400).Count -eq 0) 'non-numeric weekly default IDs must fail'
+            Assert-True (($invalidWeekDefaults | Where-Object Status -lt 400).Count -eq 0) 'invalid weekly category IDs must fail while safe type slugs remain supported'
             $counts = Get-FixtureCounts $runId
             Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-default-invalid') -eq 2) 'invalid weekly default IDs must never enter cache'
             Assert-True ((Count-FixtureEndpoint $counts '/week/filter' '1' 'week-default-invalid') -eq 0) 'invalid weekly default IDs must not reach /week/filter'
@@ -849,8 +849,8 @@ function Invoke-LocalListCacheVerification {
             Assert-SourceCacheStatuses @($weekPrime, $weekFreshHit) @('disabled', 'disabled') 'weekly metadata fresh cache'
             $weekPrimeJson = $weekPrime.Body | ConvertFrom-Json
             $weekFreshJson = $weekFreshHit.Body | ConvertFrom-Json
-            Assert-True (([string] $weekPrimeJson.data.items[0].name) -eq 'Fixture Week 11/21') 'weekly v1 defaults were not forwarded to /week/filter'
-            Assert-True (([string] $weekFreshJson.data.items[0].name) -eq 'Fixture Week 11/21') 'fresh weekly defaults did not suppress the changed /week payload'
+            Assert-True (([string] $weekPrimeJson.data.items[0].name) -eq 'Fixture Week 11/hanman') 'weekly v1 defaults were not forwarded to /week/filter'
+            Assert-True (([string] $weekFreshJson.data.items[0].name) -eq 'Fixture Week 11/hanman') 'fresh weekly defaults did not suppress the changed /week payload'
             $counts = Get-FixtureCounts $weekRunId
             Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-default-v1') -eq 1) 'weekly defaults prime must call /week once'
             Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-default-v2') -eq 0) 'fresh weekly defaults hit must not call /week'
@@ -859,14 +859,14 @@ function Invoke-LocalListCacheVerification {
             Reset-Fixture $isolatedRunId
             $isolatedWeek = Invoke-CapturedRequest (Api-Url 'list=weekly&page=1&format=min' 'week-default-v2' $isolatedRunId)
             $isolatedJson = $isolatedWeek.Body | ConvertFrom-Json
-            Assert-True ($isolatedWeek.Status -eq 200 -and ([string] $isolatedJson.data.items[0].name) -eq 'Fixture Week 12/22') 'weekly defaults test namespace was not isolated'
+            Assert-True ($isolatedWeek.Status -eq 200 -and ([string] $isolatedJson.data.items[0].name) -eq 'Fixture Week 12/another') 'weekly defaults test namespace was not isolated'
             $isolatedCounts = Get-FixtureCounts $isolatedRunId
             Assert-True ((Count-FixtureEndpoint $isolatedCounts '/week' '' 'week-default-v2') -eq 1) 'isolated weekly namespace must perform its own /week fill'
 
             Start-Sleep -Milliseconds 2200
             $weekRefresh = Invoke-CapturedRequest (Api-Url 'list=weekly&page=1&format=min' 'week-default-v2' $weekRunId)
             $weekRefreshJson = $weekRefresh.Body | ConvertFrom-Json
-            Assert-True ($weekRefresh.Status -eq 200 -and ([string] $weekRefreshJson.data.items[0].name) -eq 'Fixture Week 12/22') 'expired weekly defaults did not refresh to v2'
+            Assert-True ($weekRefresh.Status -eq 200 -and ([string] $weekRefreshJson.data.items[0].name) -eq 'Fixture Week 12/another') 'expired weekly defaults did not refresh to v2'
             Assert-SourceCacheStatuses @($weekRefresh) @('disabled') 'weekly metadata successful refresh'
             $counts = Get-FixtureCounts $weekRunId
             Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-default-v2') -eq 1) 'expired weekly defaults refresh must call /week once'
@@ -876,17 +876,17 @@ function Invoke-LocalListCacheVerification {
             Assert-True ([int] $healthBeforeFallback.diagnostics.metadata_cache.week_defaults.stale_ttl_seconds -eq 3) 'health weekly stale TTL is incorrect'
             Assert-True ([int] $healthBeforeFallback.diagnostics.metadata_cache.week_defaults.stale_fallback_count -eq 0) 'weekly stale fallback counter must start at zero'
             $healthMetadataJson = $healthBeforeFallback.diagnostics.metadata_cache | ConvertTo-Json -Depth 8 -Compress
-            Assert-True ($healthMetadataJson -notmatch '"(?:category_id|type_id)"|(?<!\d)(?:11|12|21|22)(?!\d)') 'metadata health diagnostics must not expose cached IDs or values'
+            Assert-True ($healthMetadataJson -notmatch '"(?:category_id|type_id|hanman|another)"|(?<!\d)(?:11|12)(?!\d)') 'metadata health diagnostics must not expose cached IDs or values'
             $countsAfterHealth = Get-FixtureCounts $weekRunId
             Assert-True ((Count-FixtureEndpoint $countsAfterHealth '/week' '' 'week-default-v2') -eq 1) 'health must not trigger /week'
 
             Start-Sleep -Milliseconds 2200
             $weekFallback = Invoke-CapturedRequest (Api-Url 'list=weekly&page=1&format=min' 'week-only-502' $weekRunId)
             $weekFallbackJson = $weekFallback.Body | ConvertFrom-Json
-            Assert-True ($weekFallback.Status -eq 200 -and ([string] $weekFallbackJson.data.items[0].name) -eq 'Fixture Week 12/22') 'week-only 502 did not use bounded stale defaults while /week/filter stayed healthy'
+            Assert-True ($weekFallback.Status -eq 200 -and ([string] $weekFallbackJson.data.items[0].name) -eq 'Fixture Week 12/another') 'week-only 502 did not use bounded stale defaults while /week/filter stayed healthy'
             Assert-SourceCacheStatuses @($weekFallback) @('disabled') 'weekly metadata stale fallback'
             $counts = Get-FixtureCounts $weekRunId
-            Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-only-502') -eq 2) 'failed weekly refresh must use the bounded upstream retry policy'
+            Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-only-502') -eq 3) 'failed weekly refresh must use the bounded upstream retry policy'
             Assert-True ((Count-FixtureEndpoint $counts '/week/filter' '1' 'week-only-502') -eq 1) 'stale weekly defaults must still call healthy /week/filter once'
             $healthAfterFallback = Invoke-RestMethod -Uri "$BaseUrl/?health=1&test_scenario=week-default-v2&test_run_id=$weekRunId"
             Assert-True ([int] $healthAfterFallback.diagnostics.metadata_cache.week_defaults.stale_fallback_count -eq 1) 'weekly stale fallback counter did not increase'
@@ -899,7 +899,7 @@ function Invoke-LocalListCacheVerification {
             Assert-True ($weekPastStale.Status -ge 400) 'weekly defaults beyond stale_until must surface the upstream error'
             Assert-True ([string]::IsNullOrWhiteSpace((Header-Value $weekPastStale.Headers 'X-JM-Source-Cache'))) 'past-stale failure before /week/filter must not emit X-JM-Source-Cache'
             $counts = Get-FixtureCounts $weekRunId
-            Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-only-502') -eq 4) 'request beyond stale_until must attempt /week and surface its failure'
+            Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-only-502') -eq 6) 'request beyond stale_until must attempt /week and surface its failure'
             Assert-True ((Count-FixtureEndpoint $counts '/week/filter' '1' 'week-only-502') -eq 1) 'request beyond stale_until must not call /week/filter'
             $healthPastStale = Invoke-RestMethod -Uri "$BaseUrl/?health=1&test_scenario=week-default-v2&test_run_id=$weekRunId"
             Assert-True ([int] $healthPastStale.diagnostics.metadata_cache.week_defaults.stale_fallback_count -eq 1) 'request beyond stale_until must not increase fallback count'
@@ -946,12 +946,12 @@ function Invoke-LocalListCacheVerification {
             Assert-True ($staleZeroFailure.Status -ge 400) 'weekly stale TTL zero must surface refresh failure'
             Assert-True ([string]::IsNullOrWhiteSpace((Header-Value $staleZeroFailure.Headers 'X-JM-Source-Cache'))) 'weekly stale TTL zero failure before /week/filter must not emit X-JM-Source-Cache'
             $counts = Get-FixtureCounts $runId
-            Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-only-502') -eq 2) 'weekly stale TTL zero failure must attempt /week exactly twice'
+            Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-only-502') -eq 3) 'weekly stale TTL zero failure must attempt /week exactly three times'
             Assert-True ((Count-FixtureEndpoint $counts '/week/filter' '1' 'week-only-502') -eq 0) 'weekly stale TTL zero must not continue to /week/filter'
             $staleZeroHealth = Invoke-RestMethod -Uri "$BaseUrl/?health=1&test_scenario=week-only-502&test_run_id=$runId"
             Assert-True ([int] $staleZeroHealth.diagnostics.metadata_cache.week_defaults.stale_fallback_count -eq 0) 'weekly stale TTL zero must not increase fallback count'
             $countsAfterStaleZeroHealth = Get-FixtureCounts $runId
-            Assert-True ((Count-FixtureEndpoint $countsAfterStaleZeroHealth '/week' '' 'week-only-502') -eq 2) 'stale-zero health inspection must not call /week'
+            Assert-True ((Count-FixtureEndpoint $countsAfterStaleZeroHealth '/week' '' 'week-only-502') -eq 3) 'stale-zero health inspection must not call /week'
 
             Stop-Process -Id $apiProcess.Id -Force
             $apiProcess.WaitForExit()
@@ -1483,14 +1483,14 @@ Assert-True ((Count-Key $counts 'api-good|/latest|0|bad-encrypted') -eq 2) 'bad 
 Assert-True ((Count-Key $counts 'api-502|/latest|0|bad-encrypted') -eq 0) 'bad encrypted payload must not reach a secondary domain'
 Assert-True ((Count-Key $counts 'api-timeout|/latest|0|bad-encrypted') -eq 0) 'bad encrypted payload must not reach a third domain'
 
-# Bounded retry: two primary 502 attempts then a secondary success.
+# Bounded retry: three primary 502 attempts then a secondary success.
 $runId = New-RunId
 Reset-Fixture $runId
 $retry = Invoke-CapturedRequest (Api-Url 'list=latest&page=1&format=min' '502-then-valid' $runId)
 Assert-True ($retry.Status -eq 200) '502 failover must succeed on secondary fixture'
-Assert-True ([int] (Header-Value $retry.Headers 'X-JM-Upstream-Attempts') -eq 3) '502 failover must use exactly three attempts'
+Assert-True ([int] (Header-Value $retry.Headers 'X-JM-Upstream-Attempts') -eq 4) '502 failover must use exactly four attempts'
 $counts = Get-FixtureCounts $runId
-Assert-True ((Count-Key $counts 'api-good|/latest|0|502-then-valid') -eq 2) '502 failover must attempt the primary exactly twice'
+Assert-True ((Count-Key $counts 'api-good|/latest|0|502-then-valid') -eq 3) '502 failover must attempt the primary exactly three times'
 Assert-True ((Count-Key $counts 'api-502|/latest|0|502-then-valid') -eq 1) '502 failover must attempt the secondary exactly once'
 Assert-True ((Count-Key $counts 'api-timeout|/latest|0|502-then-valid') -eq 0) '502 failover must stop after the successful secondary'
 

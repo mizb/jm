@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.17.2';
+    public const APP_VERSION    = '2026.07.17.4';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -75,7 +75,7 @@ final class JmConfig
     public const CONNECT_TIMEOUT = 5;
     public const MAX_RETRIES     = 2;
     public const DEFAULT_REQUEST_BUDGET_MS = 12000;
-    public const DEFAULT_MAX_UPSTREAM_ATTEMPTS = 10;
+    public const DEFAULT_MAX_UPSTREAM_ATTEMPTS = 15;
 
     // ── Security limits ──
     public const RATE_WINDOW       = 60;    // sliding window (seconds)
@@ -2477,16 +2477,8 @@ final class JmApiClient
         $urlPath    = $path . '?' . http_build_query($params);
         $lastFailure = null;
         $budgetDenied = false;
-        $ordered = $this->domainHealth->orderedDomains($this->baseUrls);
-        if (count($ordered) > 1) {
-            // Network failures still rotate immediately. A second bounded pass
-            // recovers transient TLS/connect resets without the legacy 15-attempt tail.
-            $ordered = array_merge($ordered, $ordered);
-        }
-
-        foreach ($ordered as $baseIndex => $baseUrl) {
-            $attemptsForBaseUrl = $baseIndex === 0 ? 2 : 1;
-            for ($retry = 0; $retry < $attemptsForBaseUrl; $retry++) {
+        foreach ($this->domainHealth->orderedDomains($this->baseUrls) as $baseUrl) {
+            for ($retry = 0; $retry <= JmConfig::MAX_RETRIES; $retry++) {
                 $remainingMs = $this->beginUpstreamAttempt();
                 if ($remainingMs === null) {
                     $budgetDenied = true;
@@ -2510,6 +2502,10 @@ final class JmApiClient
                     $category = CurlFailure::category($result->curlErrno);
                     $lastFailure = ApiFailure::network($category . ': ' . ($result->curlError !== '' ? $result->curlError : 'network error'));
                     $this->recordApiFailure($lastFailure, $baseUrl, $path, $retry, $result->status);
+                    if ($retry < JmConfig::MAX_RETRIES) {
+                        $this->sleepBeforeTransientRetry();
+                        continue;
+                    }
                     break;
                 }
 
@@ -2520,11 +2516,17 @@ final class JmApiClient
                     if (!$lastFailure->shouldRetry()) {
                         throw ApiFailure::publicException($lastFailure);
                     }
-                    if ($result->status === 429 && $retry + 1 < $attemptsForBaseUrl) {
-                        $delayMs = RetryAfter::delayMs($result->headers['retry-after'] ?? null, $this->context->unixTime(), $this->context->budget()->remainingMs());
-                        if ($delayMs > 0) usleep($delayMs * 1000);
+                    if ($retry < JmConfig::MAX_RETRIES) {
+                        $delayMs = $result->status === 429
+                            ? RetryAfter::delayMs($result->headers['retry-after'] ?? null, $this->context->unixTime(), $this->context->budget()->remainingMs())
+                            : 0;
+                        if ($delayMs > 0) {
+                            usleep($delayMs * 1000);
+                        } else {
+                            $this->sleepBeforeTransientRetry();
+                        }
+                        continue;
                     }
-                    if ($retry + 1 < $attemptsForBaseUrl) continue;
                     break;
                 }
 
@@ -2594,14 +2596,8 @@ final class JmApiClient
 
         $urlPath = JmConfig::ENDPOINT_SCRAMBLE . '?' . $query;
         $lastFailure = null;
-        $ordered = $this->domainHealth->orderedDomains($this->baseUrls);
-        if (count($ordered) > 1) {
-            $ordered = array_merge($ordered, $ordered);
-        }
-
-        foreach ($ordered as $baseIndex => $baseUrl) {
-            $attemptsForBaseUrl = $baseIndex === 0 ? 2 : 1;
-            for ($retry = 0; $retry < $attemptsForBaseUrl; $retry++) {
+        foreach ($this->domainHealth->orderedDomains($this->baseUrls) as $baseUrl) {
+            for ($retry = 0; $retry <= JmConfig::MAX_RETRIES; $retry++) {
                 $remainingMs = $this->beginUpstreamAttempt();
                 if ($remainingMs === null) break 2;
 
@@ -2622,6 +2618,10 @@ final class JmApiClient
                     $category = CurlFailure::category($result->curlErrno);
                     $lastFailure = ApiFailure::network($category . ': ' . ($result->curlError !== '' ? $result->curlError : 'network error'));
                     $this->recordApiFailure($lastFailure, $baseUrl, JmConfig::ENDPOINT_SCRAMBLE, $retry, $result->status);
+                    if ($retry < JmConfig::MAX_RETRIES) {
+                        $this->sleepBeforeTransientRetry();
+                        continue;
+                    }
                     break;
                 }
 
@@ -2633,11 +2633,17 @@ final class JmApiClient
                         $this->recordScrambleFallback($photoId, $lastFailure);
                         return (string) JmConfig::SCRAMBLE_220980;
                     }
-                    if ($result->status === 429 && $retry + 1 < $attemptsForBaseUrl) {
-                        $delayMs = RetryAfter::delayMs($result->headers['retry-after'] ?? null, $this->context->unixTime(), $this->context->budget()->remainingMs());
-                        if ($delayMs > 0) usleep($delayMs * 1000);
+                    if ($retry < JmConfig::MAX_RETRIES) {
+                        $delayMs = $result->status === 429
+                            ? RetryAfter::delayMs($result->headers['retry-after'] ?? null, $this->context->unixTime(), $this->context->budget()->remainingMs())
+                            : 0;
+                        if ($delayMs > 0) {
+                            usleep($delayMs * 1000);
+                        } else {
+                            $this->sleepBeforeTransientRetry();
+                        }
+                        continue;
                     }
-                    if ($retry + 1 < $attemptsForBaseUrl) continue;
                     break;
                 }
 
@@ -2742,6 +2748,13 @@ final class JmApiClient
     {
         if (!$this->context->budget()->beginAttempt()) return null;
         return max(1, $this->context->budget()->remainingMs());
+    }
+
+    private function sleepBeforeTransientRetry(): void
+    {
+        if ($this->context->isTestMode()) return;
+        $delayMs = min(300, max(0, $this->context->budget()->remainingMs()));
+        if ($delayMs > 0) usleep($delayMs * 1000);
     }
 
     private function budgetExhaustedException(): UpstreamBudgetExhaustedException
@@ -5124,7 +5137,7 @@ final class JmService
         foreach ($types as $type) {
             if (!is_array($type) || array_is_list($type)) continue;
             $candidateId = trim(PayloadNormalizer::scalarString($type['id'] ?? ''));
-            if (preg_match('/^\d{1,20}$/', $candidateId) === 1) {
+            if (self::isValidWeeklyTypeId($candidateId)) {
                 $typeId = $candidateId;
                 break;
             }
@@ -5159,7 +5172,7 @@ final class JmService
         $categoryId = trim(PayloadNormalizer::scalarString($value['category_id'] ?? ''));
         $typeId = trim(PayloadNormalizer::scalarString($value['type_id'] ?? ''));
         if (preg_match('/^\d{1,20}$/', $categoryId) !== 1
-            || preg_match('/^\d{1,20}$/', $typeId) !== 1
+            || !self::isValidWeeklyTypeId($typeId)
             || $value !== ['category_id' => $categoryId, 'type_id' => $typeId]) return null;
 
         $fetchedAt = $candidate['fetched_at'];
@@ -5178,6 +5191,11 @@ final class JmService
     private static function canUseStaleWeekDefaults(?array $entry, int $now, int $staleTtl): bool
     {
         return $entry !== null && $staleTtl > 0 && $now <= $entry['stale_until'];
+    }
+
+    private static function isValidWeeklyTypeId(string $value): bool
+    {
+        return preg_match('/^(?:\d{1,20}|[A-Za-z][A-Za-z0-9_-]{0,31})$/', $value) === 1;
     }
 
     private function recordWeekDefaultsStaleFallback(): void
@@ -6953,11 +6971,14 @@ function normalizePromoteSectionId(mixed $value): int
     return (int) $raw;
 }
 
-function normalizeOptionalWeeklyId(mixed $value): ?string
+function normalizeOptionalWeeklyId(mixed $value, bool $allowSlug = false): ?string
 {
     $raw = is_scalar($value) ? trim((string) $value) : '';
     if ($raw === '') return null;
-    if (!preg_match('/^\d{1,20}$/', $raw)) {
+    $valid = $allowSlug
+        ? preg_match('/^(?:\d{1,20}|[A-Za-z][A-Za-z0-9_-]{0,31})$/', $raw) === 1
+        : preg_match('/^\d{1,20}$/', $raw) === 1;
+    if (!$valid) {
         throw new SecurityException('无效的每周推荐筛选参数', 400);
     }
     return $raw;
@@ -7201,7 +7222,7 @@ if ($listParam !== null || $searchParam !== null) {
                 'weekly' => $service->fetchWeeklyList(
                     $page,
                     normalizeOptionalWeeklyId($_GET['category_id'] ?? $_GET['category'] ?? null),
-                    normalizeOptionalWeeklyId($_GET['type_id'] ?? $_GET['type'] ?? null),
+                    normalizeOptionalWeeklyId($_GET['type_id'] ?? $_GET['type'] ?? null, true),
                 ),
                 default => $service->fetchPopularList(
                     $page,

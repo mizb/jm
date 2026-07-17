@@ -5,13 +5,15 @@
 ## 权威读取顺序
 
 1. `D:\jm\jmcomic-api-main\docs\performance-delivery-report.md`
-2. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-13-cross-project-performance-design.md`
-3. `D:\jm\jmcomic-api-main\docs\superpowers\plans\2026-07-13-cross-project-performance-delivery.md`
-4. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-14-java-reference-adoption-audit.md`
-5. `D:\jm\jmcomic-api-main\docs\bug-hunt-2026-07-17.md`
-6. `D:\jm\jmapi-extension\docs\superpowers\specs\2026-07-17-canonical-page-url-design.md`
-7. `D:\jm\jmapi-extension\docs\apk-optimization-design.md`
-8. `D:\jm\jmapi-extension\docs\ai-delivery-prompt.md`
+2. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-17-upstream-retry-compatibility-design.md`
+3. `D:\jm\jmcomic-api-main\docs\superpowers\plans\2026-07-17-upstream-retry-compatibility.md`
+4. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-13-cross-project-performance-design.md`
+5. `D:\jm\jmcomic-api-main\docs\superpowers\plans\2026-07-13-cross-project-performance-delivery.md`
+6. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-14-java-reference-adoption-audit.md`
+7. `D:\jm\jmcomic-api-main\docs\bug-hunt-2026-07-17.md`
+8. `D:\jm\jmapi-extension\docs\superpowers\specs\2026-07-17-canonical-page-url-design.md`
+9. `D:\jm\jmapi-extension\docs\apk-optimization-design.md`
+10. `D:\jm\jmapi-extension\docs\ai-delivery-prompt.md`
 
 项目路径固定为：
 
@@ -20,18 +22,19 @@
 
 ## 当前检查点
 
-- API：`2026.07.17.2`。
+- API：`2026.07.17.4`。
 - APK 交付版本：`1.4.15 / versionCode 15`；`1.4.14 / 14` 的反代子路径页面 URL 缺陷仅作为历史 RED 基线。
-- 当前 API `index.php` SHA-256：`7A2AC07AE89CA4EE0ADB4F4B8435C8038CE656769295FD48B8126F01CD870484`；v1.4.15 APK SHA-256：`A1FD20677F53784CEAED728BCFC0A44E40DD53D35C47A582E1A3195D51B57872`。
+- 当前 API `index.php` SHA-256：`E263D5A8CB6B2678E417E344610786F5BF32E767CEB72CF8C5F202041AD84E7E`；v1.4.15 APK SHA-256：`A1FD20677F53784CEAED728BCFC0A44E40DD53D35C47A582E1A3195D51B57872`。
 - 本机代码、聚焦静态/运行时测试、Keiyoushi 构建、元数据和 Suwayomi 2.3.2243 真实回归已经完成。
-- 正式同条件性能 A/B 只绑定恢复版 `A88271DC…7A13ED` 与上一版 `.1 / 53A15D40…A3B5C`；证据 SHA-256 为 `6ECB423EFE3A2B66B196B1AEC9D15D96CA8F1DB0732ABD01181A24F5CDB2F9B5`，不得冒充当前 `.2`。
-- `.2` 已针对现场 Latest 502 增加五域最多两轮、默认 10 次的瞬态网络恢复，仍受 12 秒总预算限制；优先部署并核对 `X-JM-API-Version: 2026.07.17.2` 与现场结果。
-- 历史透明 HTTPS A/B 绑定恢复版 `A88271DC…7A13ED` 与历史 AFTER `680AF597…18FB7C / 2026.07.13.2`；后一份 A/B 绑定恢复版与 `.1 / 53A15D40…A3B5C`。两份证据都不代表当前 `.2`，不得混用。
+- `.2` 正式同条件性能 A/B 已完成：恢复版 `A88271DC…7A13ED` 对 `.2 / 7A2AC07A…70484`，证据 SHA-256 为 `31FC02D295FF4F5F25CA4C0AEB46DEF1EB73092E7AA095D628002CCFF05524C9`；这是 `.3` 前的历史性能证据，不得改标为 `.3`。
+- 当前 after-only 深度证据 SHA-256 为 `F709B6EE207B5A9DA790D51DC7F6A88C4FDE3D4D23AF51C12C986E9042A928E5`，包含 APCu 碎片与预取单事件利用率；不得外推为长期用户行为。
+- `.4` 保留每域最多三次、300ms 间隔、默认最多 15 次和 12 秒总预算，并修复真实 `/week` 的字母型 type ID（`hanman / another / manga`）被误判为非法；优先重建并核对 `X-JM-API-Version: 2026.07.17.4` 与现场结果。
+- 历史透明 HTTPS A/B 分别绑定 `680AF597…18FB7C / 2026.07.13.2`、`.1 / 53A15D40…A3B5C` 和 `.2 / 7A2AC07A…70484`；`.4` 尚无同条件性能 A/B，证据不得混用。
 - 两项目没有 Git 元数据；原始修改时间点没有预先测量 BEFORE。不得伪造 diff、commit、基线或提升百分比。
 
 开始时先比较最终报告所列源码与产物哈希：
 
-- 哈希未变化：不要重做 APK、Suwayomi 或 `.1` A/B；优先完成 `.2` 现场 502 复验和 Docker 外部验收。
+- 哈希未变化：不要重做 APK、Suwayomi 或历史 A/B；优先完成 `.4` 现场 502 复验和 Docker 外部验收。
 - 哈希发生变化：调查变化来源，保留用户改动，按影响范围重新执行合同、运行时、构建和回归，并更新最终报告。
 - Docker 或生产密钥仍不可用：完成其他所有可执行工作后，保留精确错误证据和可复制命令；不要以猜测代替结果。
 - Suwayomi 与 API 若位于不同容器，扩展中的 `127.0.0.1` 指向 Suwayomi 容器自身；必须使用该容器可访问的 API 服务名、平台支持时的 `host.docker.internal` 或局域网地址。
@@ -76,4 +79,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\fault-injection-runt
 
 ## 简短启动提示词
 
-> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先部署并验证 API `2026.07.17.2 / 7A2AC07A…70484` 的 Latest 502 修复；不要重做未变化的 APK/Suwayomi，也不得把 `.1` A/B 冒充 `.2`。失败时按 request-id 诊断并最小修复；随后自主完成具备条件的 Docker 验收，严守固定筛选/API/章节/页面 URL/缓存安全契约。
+> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。核对 API `2026.07.17.4 / E263D5A8…4E7E`，并把 `.2` A/B `31FC02D2…24C9` 与 after-only `F709B6EE…928E5` 视为历史性能证据；未变化时不重做 APK/Suwayomi/本机性能矩阵。先强制重建 `.4` 并验证 Latest，失败时按 request-id 最小修复；随后完成具备条件的 Docker 验收，严守固定契约。
