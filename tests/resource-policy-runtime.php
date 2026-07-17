@@ -891,6 +891,77 @@ function testListItemJsonListFieldsRejectObjectsBeforeCaching(): void
     }
 }
 
+function testListItemIdsMustBeCanonicalJmIdsBeforeCaching(): void
+{
+    $cache = new MemoryCache();
+    resourceAssert($cache->isAvailable(), 'list-item ID validation test requires APCu CLI');
+    putenv('JM_TEST_ALLOWED_HOSTS=api.example.test');
+    putenv('JM_LIST_CACHE_TTL=60');
+    putenv('JM_SEARCH_CACHE_TTL=60');
+
+    try {
+        apcu_clear_cache();
+        $context = RequestContext::forTest('list-item-id-invalid', 12000, 10);
+        $transport = new ResourceEncryptedPayloadTransport([[
+            'id' => '900001oops',
+            'name' => 'Malformed list item',
+        ]]);
+        $api = JmApiClient::forTest($context, $transport, ['https://api.example.test']);
+        $service = new JmService(context: $context, api: $api, cache: $cache);
+        for ($attempt = 1; $attempt <= 2; $attempt++) {
+            $thrown = null;
+            try {
+                $service->fetchLatestList(1);
+            } catch (Throwable $error) {
+                $thrown = $error;
+            }
+            resourceAssert(
+                $thrown instanceof JmException && $thrown->getCode() === 502,
+                "non-canonical list item ID attempt {$attempt} was exposed to clients",
+            );
+        }
+        resourceAssertSame(2, $transport->calls, 'non-canonical list item ID entered source cache');
+
+        apcu_clear_cache();
+        $context = RequestContext::forTest('search-redirect-id-invalid', 12000, 10);
+        $transport = new ResourceEncryptedPayloadTransport(['redirect_aid' => '900001oops']);
+        $api = JmApiClient::forTest($context, $transport, ['https://api.example.test']);
+        $service = new JmService(context: $context, api: $api, cache: $cache);
+        for ($attempt = 1; $attempt <= 2; $attempt++) {
+            $thrown = null;
+            try {
+                $service->searchAlbums('malformed redirect', 1);
+            } catch (Throwable $error) {
+                $thrown = $error;
+            }
+            resourceAssert(
+                $thrown instanceof JmException && $thrown->getCode() === 502,
+                "non-canonical search redirect ID attempt {$attempt} was exposed to clients",
+            );
+        }
+        resourceAssertSame(2, $transport->calls, 'non-canonical search redirect ID entered source cache');
+
+        apcu_clear_cache();
+        $context = RequestContext::forTest('list-item-id-valid', 12000, 10);
+        $transport = new ResourceEncryptedPayloadTransport([[
+            'id' => '12345678901234567890',
+            'name' => 'Boundary list item',
+        ]]);
+        $api = JmApiClient::forTest($context, $transport, ['https://api.example.test']);
+        $service = new JmService(context: $context, api: $api, cache: $cache);
+        resourceAssertSame(
+            '12345678901234567890',
+            $service->fetchLatestList(1)->items[0]->id ?? null,
+            'valid 20-digit list item ID changed',
+        );
+    } finally {
+        putenv('JM_SEARCH_CACHE_TTL');
+        putenv('JM_LIST_CACHE_TTL');
+        putenv('JM_TEST_ALLOWED_HOSTS');
+        apcu_clear_cache();
+    }
+}
+
 function testAlbumJsonListFieldsRejectObjectsBeforeCaching(): void
 {
     $cache = new MemoryCache();
@@ -1729,6 +1800,42 @@ function testMalformedChapterPayloadIsNeverSwallowedOrCachedAsPartialSuccess(): 
     $manifestKey = $context->testCacheNamespace() . 'manifest:v2:' . hash('sha256', '350234:220980');
     resourceAssertSame(null, $cache->get($chapterKey), 'malformed chapter entered chapter v2 cache');
     resourceAssertSame(null, $cache->get($manifestKey), 'malformed chapter entered manifest v2 cache');
+}
+
+function testCompleteChapterFailureIsNotReturnedAsSuccessfulEmptyData(): void
+{
+    $cache = new MemoryCache();
+    if ($cache->isAvailable()) apcu_clear_cache();
+    putenv('JM_TEST_ALLOWED_HOSTS=api.example.test');
+    putenv('JM_CHAPTER_CACHE_TTL=0');
+
+    try {
+        $context = RequestContext::forTest('chapter-complete-failure', 12000, 4);
+        $transport = new ResourceSequenceTransport([
+            resourceHttpResult(502, 'scramble failure 1'),
+            resourceHttpResult(502, 'scramble failure 2'),
+            resourceHttpResult(502, 'chapter failure 1'),
+            resourceHttpResult(502, 'chapter failure 2'),
+        ]);
+        $api = JmApiClient::forTest($context, $transport, ['https://api.example.test']);
+        $service = new JmService(context: $context, api: $api, cache: $cache);
+
+        $thrown = null;
+        try {
+            $service->fetchChapters(['350234']);
+        } catch (Throwable $error) {
+            $thrown = $error;
+        }
+        resourceAssert(
+            $thrown instanceof JmException && $thrown->getCode() === 502,
+            'complete single-chapter failure was returned as successful empty chapter data',
+        );
+        resourceAssertSame(4, count($transport->urls), 'complete chapter failure did not use the bounded attempt policy');
+    } finally {
+        putenv('JM_CHAPTER_CACHE_TTL');
+        putenv('JM_TEST_ALLOWED_HOSTS');
+        if ($cache->isAvailable()) apcu_clear_cache();
+    }
 }
 
 function testChapterTtlZeroBypassesExistingCacheAndNeverWritesFreshData(): void
@@ -4396,6 +4503,7 @@ $tests = [
     'json-root-list-provenance' => 'testRootJsonListProvenanceRejectsObjectsAndCachesOnlyTrueEmptyLists',
     'json-nested-list-provenance' => 'testNestedJsonListProvenanceRejectsObjectsAndCachesOnlyTrueEmptyLists',
     'json-list-item-field-provenance' => 'testListItemJsonListFieldsRejectObjectsBeforeCaching',
+    'list-item-id-validation' => 'testListItemIdsMustBeCanonicalJmIdsBeforeCaching',
     'json-album-list-field-provenance' => 'testAlbumJsonListFieldsRejectObjectsBeforeCaching',
     'json-chapter-root-series-provenance' => 'testChapterRootAndSeriesJsonContainersFailSafelyBeforeCaching',
     'json-chapter-extra-metadata-forward-compat' => 'testChapterImageUnknownJsonMetadataIsIgnoredBeforeCaching',
@@ -4412,6 +4520,7 @@ $tests = [
     'manifest-cache-forgery' => 'testReaderManifestRejectsForgedImageIdentityAndDerivedFields',
     'manifest-cache-unsegmented-mime' => 'testReaderManifestValidatesUnsegmentedMimeFromTheOriginalFilename',
     'chapter-malformed-not-cached' => 'testMalformedChapterPayloadIsNeverSwallowedOrCachedAsPartialSuccess',
+    'chapter-complete-failure' => 'testCompleteChapterFailureIsNotReturnedAsSuccessfulEmptyData',
     'chapter-ttl-zero-bypass' => 'testChapterTtlZeroBypassesExistingCacheAndNeverWritesFreshData',
     'chapter-ttl-zero-failure' => 'testChapterTtlZeroNeverFallsBackToExistingCacheWhenProducerFails',
     'manifest-ttl-zero-bypass' => 'testManifestTtlZeroBypassesExistingManifestAndChapterCaches',

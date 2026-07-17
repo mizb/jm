@@ -31,6 +31,7 @@ The practical outcomes should be:
 The current API now has:
 
 - API app version `2026.07.07.7`.
+- Current cross-project performance maintenance version: `2026.07.17.1`.
 - Docker entrypoint that prints `JM API version ...`.
 - Port `8088`.
 - APCu page cache and APCu diagnostics in `health=1`.
@@ -490,9 +491,9 @@ Use test-first changes for implementation. Update static tests before code for e
 Required static checks:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File D:\jm\jm-boom-master\jmcomic-api-main\tests\page-endpoint-contract.ps1
-powershell -ExecutionPolicy Bypass -File D:\jm\jm-boom-master\jmcomic-api-main\tests\docker-runtime-contract.ps1
-powershell -ExecutionPolicy Bypass -File D:\jm\jm-boom-master\jmcomic-api-main\tests\list-endpoint-contract.ps1
+powershell -ExecutionPolicy Bypass -File D:\jm\jmcomic-api-main\tests\page-endpoint-contract.ps1
+powershell -ExecutionPolicy Bypass -File D:\jm\jmcomic-api-main\tests\docker-runtime-contract.ps1
+powershell -ExecutionPolicy Bypass -File D:\jm\jmcomic-api-main\tests\list-endpoint-contract.ps1
 powershell -ExecutionPolicy Bypass -File D:\jm\jmapi-extension\tests\extension-contract.ps1
 ```
 
@@ -516,7 +517,7 @@ Add or extend tests to check:
 Required Docker runtime verification:
 
 ```powershell
-cd D:\jm\jm-boom-master\jmcomic-api-main
+cd D:\jm\jmcomic-api-main
 docker compose build
 docker compose up -d --force-recreate
 curl -i "http://localhost:8088/?health=1"

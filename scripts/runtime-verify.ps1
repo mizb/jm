@@ -2,6 +2,7 @@ param(
     [string] $BaseUrl = 'http://localhost:8088',
     [string] $AlbumId = '350234',
     [string] $ChapterId = '350234',
+    [ValidateRange(1, 100000)]
     [int] $Page = 1,
     [int] $PrefetchPages = 10,
     [int] $PrefetchWaitSeconds = 8,
@@ -9,6 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Net.Http
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptRoot
@@ -47,12 +49,59 @@ function Assert-HeaderExists {
     }
 }
 
+function Get-HeaderValue {
+    param($Headers, [string] $Name)
+    return (@($Headers[$Name]) -join ', ')
+}
+
 function Invoke-JmRequest {
     param(
         [string] $Url,
         [string] $Method = 'GET'
     )
     Invoke-WebRequest -UseBasicParsing -Method $Method -Uri $Url
+}
+
+function Invoke-JmImageRequest {
+    param([Parameter(Mandatory = $true)][string] $Url)
+
+    if ($null -eq $script:JmImageHttpClient) {
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $handler.AllowAutoRedirect = $false
+        $script:JmImageHttpClient = New-Object System.Net.Http.HttpClient($handler, $true)
+        $script:JmImageHttpClient.Timeout = [TimeSpan]::FromSeconds(30)
+    }
+
+    $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, $Url)
+    $response = $null
+    try {
+        $response = $script:JmImageHttpClient.SendAsync(
+            $request,
+            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+        ).GetAwaiter().GetResult()
+        $headers = @{}
+        foreach ($header in $response.Headers) { $headers[$header.Key] = @($header.Value) }
+        foreach ($header in $response.Content.Headers) { $headers[$header.Key] = @($header.Value) }
+
+        $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        try {
+                [void] $stream.CopyToAsync([System.IO.Stream]::Null).GetAwaiter().GetResult()
+        } finally {
+            $stream.Dispose()
+        }
+
+        $statusCode = [int] $response.StatusCode
+        if (-not $response.IsSuccessStatusCode) {
+            throw "Image GET failed with HTTP $statusCode for '$Url'."
+        }
+        return [pscustomobject]@{
+            StatusCode = $statusCode
+            Headers = $headers
+        }
+    } finally {
+        if ($null -ne $response) { $response.Dispose() }
+        $request.Dispose()
+    }
 }
 
 function Invoke-DockerCompose {
@@ -68,11 +117,15 @@ function Invoke-DockerCompose {
 function Get-ImageUrl {
     param(
         [int] $ImagePage,
-        [bool] $DisablePrefetch = $false
+        [bool] $DisablePrefetch = $false,
+        [string] $NextChapterId = ''
     )
     $url = "${BaseUrl}/?jmid=${AlbumId}&chapter=${ChapterId}&page=${ImagePage}"
     if ($DisablePrefetch) {
         $url += '&prefetch=0'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($NextChapterId)) {
+        $url += "&next_chapter=$([uri]::EscapeDataString($NextChapterId))"
     }
     return $url
 }
@@ -89,16 +142,26 @@ function Wait-Health {
     throw "Service did not become healthy at ${healthUrl}"
 }
 
-function Try-HeadImage {
+function Try-GetImage {
     param(
         [int] $ImagePage,
         [bool] $DisablePrefetch = $false
     )
     try {
-        return Invoke-JmRequest -Method 'HEAD' -Url (Get-ImageUrl -ImagePage $ImagePage -DisablePrefetch $DisablePrefetch)
+        return Invoke-JmImageRequest -Url (Get-ImageUrl -ImagePage $ImagePage -DisablePrefetch $DisablePrefetch)
     } catch {
         return $null
     }
+}
+
+function Get-HealthJson {
+    return ((Invoke-JmRequest -Url "${BaseUrl}/?health=1").Content | ConvertFrom-Json)
+}
+
+function Get-PrefetchMetric {
+    param($HealthJson, [string] $Name)
+    $property = $HealthJson.diagnostics.prefetch.aggregate.PSObject.Properties[$Name]
+    return $(if ($null -eq $property) { 0 } else { [long] $property.Value })
 }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
@@ -155,46 +218,94 @@ $metadataJson = $metadata.Content | ConvertFrom-Json
 Assert-True ($metadataJson.success -eq $true) "Album metadata request failed: ${metadataUrl}"
 Assert-True ($metadataJson.data.album.album_id -eq $AlbumId) "Album metadata returned an unexpected album_id."
 
-$firstImage = Invoke-JmRequest -Method 'HEAD' -Url (Get-ImageUrl -ImagePage $Page)
+$chapterUrl = "${BaseUrl}/?jmid=${AlbumId}&chapter=${ChapterId}&format=min"
+$chapterResponse = Invoke-JmRequest -Url $chapterUrl
+$chapterJson = $chapterResponse.Content | ConvertFrom-Json
+$selectedChapters = @($chapterJson.data.chapters | Where-Object { [string] $_.photo_id -eq $ChapterId })
+Assert-True ($selectedChapters.Count -eq 1) 'Chapter verification did not return exactly the requested chapter.'
+$verifiedChapter = $selectedChapters[0]
+$pageCount = [int] $verifiedChapter.page_count
+Assert-True ($pageCount -ge 4) 'Runtime prefetch verification requires a confirmed chapter with page_count -ge 4.'
+
+$nextChapterId = ''
+foreach ($chapterImage in @($verifiedChapter.images)) {
+    if ([string] $chapterImage.url -match '[?&]next_chapter=(\d{1,20})(?:&|$)') {
+        $nextChapterId = $Matches[1]
+        break
+    }
+}
+Assert-True (-not [string]::IsNullOrWhiteSpace($nextChapterId)) 'Runtime prefetch=0 verification requires a confirmed next_chapter from the selected chapter.'
+
+# Prove prefetch=0 on a confirmed adjacent page3+ pair before any default
+# prefetch can warm it. Aggregate stats also cover an optional next chapter.
+$prefetchDisabledPage = $pageCount - 1
+$afterDisabledPage = $pageCount
+$disabledBefore = Get-HealthJson
+$disabled = Invoke-JmImageRequest -Url (Get-ImageUrl -ImagePage $prefetchDisabledPage -DisablePrefetch $true -NextChapterId $nextChapterId)
+Assert-HeaderEquals $disabled.Headers 'X-JM-Prefetch' 'disabled'
+Start-Sleep -Seconds $PrefetchWaitSeconds
+$disabledAfter = Get-HealthJson
+Assert-True ((Get-PrefetchMetric $disabledAfter 'scheduled') - (Get-PrefetchMetric $disabledBefore 'scheduled') -eq 0) 'prefetch=0 scheduled background work.'
+Assert-True ((Get-PrefetchMetric $disabledAfter 'attempted') - (Get-PrefetchMetric $disabledBefore 'attempted') -eq 0) 'prefetch=0 attempted current, page3+, or next-chapter background work.'
+Assert-True ((Get-PrefetchMetric $disabledAfter 'cache_hits') - (Get-PrefetchMetric $disabledBefore 'cache_hits') -eq 0) 'prefetch=0 performed cached background work.'
+Assert-True ((Get-PrefetchMetric $disabledAfter 'stored') - (Get-PrefetchMetric $disabledBefore 'stored') -eq 0) 'prefetch=0 stored a background page.'
+Assert-True ((Get-PrefetchMetric $disabledAfter 'bytes') - (Get-PrefetchMetric $disabledBefore 'bytes') -eq 0) 'prefetch=0 downloaded background bytes.'
+$afterDisabled = Invoke-JmImageRequest -Url (Get-ImageUrl -ImagePage $afterDisabledPage -DisablePrefetch $true)
+Assert-HeaderEquals $afterDisabled.Headers 'X-JM-Cache' 'MISS'
+
+# Default prefetch may only complete a bounded HIT subset. The wall/byte
+# budgets intentionally do not promise every N+1..N+10 page will be hot.
+$defaultPage = $Page
+Assert-True ($defaultPage -lt $prefetchDisabledPage) 'The requested default prefetch page must leave the confirmed adjacent page3+ pair isolated.'
+$prefetchBefore = Get-HealthJson
+$firstImage = Invoke-JmImageRequest -Url (Get-ImageUrl -ImagePage $defaultPage)
 Assert-HeaderExists $firstImage.Headers 'X-JM-Cache'
 Assert-HeaderExists $firstImage.Headers 'X-JM-Image-Codec'
 Assert-HeaderExists $firstImage.Headers 'X-JM-Singleflight'
 Assert-HeaderExists $firstImage.Headers 'X-JM-Prefetch'
 Assert-HeaderExists $firstImage.Headers 'X-JM-Cache-Store'
 Assert-HeaderEquals $firstImage.Headers 'X-JM-Cache' 'MISS'
+$prefetchStatus = Get-HeaderValue $firstImage.Headers 'X-JM-Prefetch'
+Assert-True ($prefetchStatus -match '^(scheduled|disabled|none|skipped-[a-z-]+)$') "Unexpected low-cardinality prefetch status: $prefetchStatus"
 
-$secondImage = Invoke-JmRequest -Method 'HEAD' -Url (Get-ImageUrl -ImagePage $Page)
+Start-Sleep -Seconds $PrefetchWaitSeconds
+$prefetchAfter = Get-HealthJson
+$eventDelta = (Get-PrefetchMetric $prefetchAfter 'events') - (Get-PrefetchMetric $prefetchBefore 'events')
+$scheduledDelta = (Get-PrefetchMetric $prefetchAfter 'scheduled') - (Get-PrefetchMetric $prefetchBefore 'scheduled')
+$attemptedDelta = (Get-PrefetchMetric $prefetchAfter 'attempted') - (Get-PrefetchMetric $prefetchBefore 'attempted')
+$cacheHitDelta = (Get-PrefetchMetric $prefetchAfter 'cache_hits') - (Get-PrefetchMetric $prefetchBefore 'cache_hits')
+$storedDelta = (Get-PrefetchMetric $prefetchAfter 'stored') - (Get-PrefetchMetric $prefetchBefore 'stored')
+$bytesDelta = (Get-PrefetchMetric $prefetchAfter 'bytes') - (Get-PrefetchMetric $prefetchBefore 'bytes')
+$wallDelta = (Get-PrefetchMetric $prefetchAfter 'wall_ms') - (Get-PrefetchMetric $prefetchBefore 'wall_ms')
+Assert-True ($eventDelta -eq 1) "One image scheduling decision must produce one final stats event; got $eventDelta."
+Assert-True ($attemptedDelta -ge 0 -and $cacheHitDelta -ge 0 -and $storedDelta -ge 0 -and $bytesDelta -ge 0 -and $wallDelta -ge 0) 'Prefetch aggregate counters must be monotonic.'
+Assert-True ($cacheHitDelta + $storedDelta -le $attemptedDelta) 'Prefetch cache_hits + stored exceeded attempted.'
+if ($prefetchStatus -eq 'scheduled') {
+    Assert-True ($scheduledDelta -eq 1) 'A scheduled callback was not reflected in aggregate stats.'
+    Assert-True ($wallDelta -le ([int] $prefetchAfter.diagnostics.prefetch.wall_budget_ms + 1000)) 'Prefetch callback exceeded wall budget tolerance.'
+} else {
+    Assert-True ($scheduledDelta -eq 0 -and $attemptedDelta -eq 0) 'A skipped scheduling decision performed callback work.'
+}
+
+$secondImage = Invoke-JmImageRequest -Url (Get-ImageUrl -ImagePage $defaultPage -DisablePrefetch $true)
 Assert-HeaderEquals $secondImage.Headers 'X-JM-Cache' 'HIT'
 
-# Default prefetch target range is N+1 through N+10.
-Start-Sleep -Seconds $PrefetchWaitSeconds
 $prefetched = @()
 for ($offset = 1; $offset -le $PrefetchPages; $offset++) {
-    $candidatePage = $Page + $offset
-    $prefetchResponse = Try-HeadImage -ImagePage $candidatePage -DisablePrefetch $true
-    if ($null -eq $prefetchResponse) {
-        break
+    $candidatePage = $defaultPage + $offset
+    if ($candidatePage -gt $pageCount) { break }
+    if ($candidatePage -eq $prefetchDisabledPage -or $candidatePage -eq $afterDisabledPage) { continue }
+    $prefetchResponse = Try-GetImage -ImagePage $candidatePage -DisablePrefetch $true
+    Assert-True ($null -ne $prefetchResponse) "Confirmed candidate page $candidatePage was not readable."
+    if ((Get-HeaderValue $prefetchResponse.Headers 'X-JM-Cache') -eq 'HIT') {
+        $prefetched += $candidatePage
     }
-    Assert-HeaderEquals $prefetchResponse.Headers 'X-JM-Cache' 'HIT'
-    $prefetched += $candidatePage
 }
-Assert-True ($prefetched.Count -gt 0) "No prefetched pages were observed after requesting page ${Page}."
-Write-Output "Observed prefetch cache hits for pages: $($prefetched -join ', ')"
-
-$prefetchDisabledPage = $Page + $PrefetchPages + 1
-$afterDisabledPage = $prefetchDisabledPage + 1
-try {
-    Invoke-JmRequest -Method 'HEAD' -Url (Get-ImageUrl -ImagePage $prefetchDisabledPage -DisablePrefetch $true) | Out-Null
-    $afterDisabled = Try-HeadImage -ImagePage $afterDisabledPage -DisablePrefetch $true
-    if ($null -ne $afterDisabled) {
-        $afterCache = @($afterDisabled.Headers['X-JM-Cache']) -join ', '
-        Assert-True ($afterCache -ne 'HIT') "prefetch=0 still warmed page ${afterDisabledPage}."
-    } else {
-        Write-Warning "Could not check prefetch=0 follow-up page ${afterDisabledPage}; it may be out of range."
-    }
-} catch {
-    Write-Warning "Could not check prefetch=0 at page ${prefetchDisabledPage}; it may be out of range. $($_.Exception.Message)"
+if ($prefetchStatus -eq 'scheduled' -and $attemptedDelta -gt 0) {
+    Assert-True ($prefetched.Count -gt 0) 'Scheduled prefetch attempted work but produced no bounded HIT subset.'
+    Assert-True ($prefetched.Count -le $storedDelta) 'Observed prefetch HIT subset exceeded stored stats.'
 }
+Write-Output "Observed bounded HIT subset for pages: $($prefetched -join ', ')"
 
 $imageFiles = Invoke-DockerCompose -Arguments @('exec', '-T', 'jmcomic-api', 'sh', '-lc', "find /app -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.gif' \)")
 Assert-True ([string]::IsNullOrWhiteSpace(($imageFiles | Out-String).Trim())) "Unexpected image files were found under /app: ${imageFiles}"

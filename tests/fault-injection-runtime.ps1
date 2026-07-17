@@ -843,8 +843,8 @@ function Invoke-LocalListCacheVerification {
             Assert-SourceCacheStatuses @($weekPrime, $weekFreshHit) @('disabled', 'disabled') 'weekly metadata fresh cache'
             $weekPrimeJson = $weekPrime.Body | ConvertFrom-Json
             $weekFreshJson = $weekFreshHit.Body | ConvertFrom-Json
-            Assert-True (([string] $weekPrimeJson.data.items[0].id) -eq 'week-11-21') 'weekly v1 defaults were not forwarded to /week/filter'
-            Assert-True (([string] $weekFreshJson.data.items[0].id) -eq 'week-11-21') 'fresh weekly defaults did not suppress the changed /week payload'
+            Assert-True (([string] $weekPrimeJson.data.items[0].name) -eq 'Fixture Week 11/21') 'weekly v1 defaults were not forwarded to /week/filter'
+            Assert-True (([string] $weekFreshJson.data.items[0].name) -eq 'Fixture Week 11/21') 'fresh weekly defaults did not suppress the changed /week payload'
             $counts = Get-FixtureCounts $weekRunId
             Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-default-v1') -eq 1) 'weekly defaults prime must call /week once'
             Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-default-v2') -eq 0) 'fresh weekly defaults hit must not call /week'
@@ -853,14 +853,14 @@ function Invoke-LocalListCacheVerification {
             Reset-Fixture $isolatedRunId
             $isolatedWeek = Invoke-CapturedRequest (Api-Url 'list=weekly&page=1&format=min' 'week-default-v2' $isolatedRunId)
             $isolatedJson = $isolatedWeek.Body | ConvertFrom-Json
-            Assert-True ($isolatedWeek.Status -eq 200 -and ([string] $isolatedJson.data.items[0].id) -eq 'week-12-22') 'weekly defaults test namespace was not isolated'
+            Assert-True ($isolatedWeek.Status -eq 200 -and ([string] $isolatedJson.data.items[0].name) -eq 'Fixture Week 12/22') 'weekly defaults test namespace was not isolated'
             $isolatedCounts = Get-FixtureCounts $isolatedRunId
             Assert-True ((Count-FixtureEndpoint $isolatedCounts '/week' '' 'week-default-v2') -eq 1) 'isolated weekly namespace must perform its own /week fill'
 
             Start-Sleep -Milliseconds 2200
             $weekRefresh = Invoke-CapturedRequest (Api-Url 'list=weekly&page=1&format=min' 'week-default-v2' $weekRunId)
             $weekRefreshJson = $weekRefresh.Body | ConvertFrom-Json
-            Assert-True ($weekRefresh.Status -eq 200 -and ([string] $weekRefreshJson.data.items[0].id) -eq 'week-12-22') 'expired weekly defaults did not refresh to v2'
+            Assert-True ($weekRefresh.Status -eq 200 -and ([string] $weekRefreshJson.data.items[0].name) -eq 'Fixture Week 12/22') 'expired weekly defaults did not refresh to v2'
             Assert-SourceCacheStatuses @($weekRefresh) @('disabled') 'weekly metadata successful refresh'
             $counts = Get-FixtureCounts $weekRunId
             Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-default-v2') -eq 1) 'expired weekly defaults refresh must call /week once'
@@ -870,14 +870,14 @@ function Invoke-LocalListCacheVerification {
             Assert-True ([int] $healthBeforeFallback.diagnostics.metadata_cache.week_defaults.stale_ttl_seconds -eq 3) 'health weekly stale TTL is incorrect'
             Assert-True ([int] $healthBeforeFallback.diagnostics.metadata_cache.week_defaults.stale_fallback_count -eq 0) 'weekly stale fallback counter must start at zero'
             $healthMetadataJson = $healthBeforeFallback.diagnostics.metadata_cache | ConvertTo-Json -Depth 8 -Compress
-            Assert-True ($healthMetadataJson -notmatch 'category_id|type_id|week-11-21|week-12-22') 'metadata health diagnostics must not expose cached IDs or values'
+            Assert-True ($healthMetadataJson -notmatch '"(?:category_id|type_id)"|(?<!\d)(?:11|12|21|22)(?!\d)') 'metadata health diagnostics must not expose cached IDs or values'
             $countsAfterHealth = Get-FixtureCounts $weekRunId
             Assert-True ((Count-FixtureEndpoint $countsAfterHealth '/week' '' 'week-default-v2') -eq 1) 'health must not trigger /week'
 
             Start-Sleep -Milliseconds 2200
             $weekFallback = Invoke-CapturedRequest (Api-Url 'list=weekly&page=1&format=min' 'week-only-502' $weekRunId)
             $weekFallbackJson = $weekFallback.Body | ConvertFrom-Json
-            Assert-True ($weekFallback.Status -eq 200 -and ([string] $weekFallbackJson.data.items[0].id) -eq 'week-12-22') 'week-only 502 did not use bounded stale defaults while /week/filter stayed healthy'
+            Assert-True ($weekFallback.Status -eq 200 -and ([string] $weekFallbackJson.data.items[0].name) -eq 'Fixture Week 12/22') 'week-only 502 did not use bounded stale defaults while /week/filter stayed healthy'
             Assert-SourceCacheStatuses @($weekFallback) @('disabled') 'weekly metadata stale fallback'
             $counts = Get-FixtureCounts $weekRunId
             Assert-True ((Count-FixtureEndpoint $counts '/week' '' 'week-only-502') -eq 2) 'failed weekly refresh must use the bounded upstream retry policy'

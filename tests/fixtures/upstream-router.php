@@ -173,8 +173,10 @@ function weeklyListItems(string $categoryId, string $typeId): array
 {
     $categoryId = preg_match('/^\d+$/', $categoryId) === 1 ? $categoryId : '0';
     $typeId = preg_match('/^\d+$/', $typeId) === 1 ? $typeId : '0';
+    $idWord = unpack('Nvalue', substr(hash('sha256', $categoryId . ':' . $typeId, true), 0, 4));
+    $id = '9' . str_pad((string) ($idWord['value'] ?? 0), 10, '0', STR_PAD_LEFT);
     return [[
-        'id' => 'week-' . $categoryId . '-' . $typeId,
+        'id' => $id,
         'name' => 'Fixture Week ' . $categoryId . '/' . $typeId,
         'author' => 'Fixture',
         'image' => '',

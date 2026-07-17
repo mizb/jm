@@ -2,32 +2,34 @@
 
 This prompt was used for the 2026-07-07 advanced reader optimization implementation. A later homepage/weekly-list follow-up brought the current implemented API version to `2026.07.07.7`. Reuse it only for audit, regression repair, or follow-up maintenance, and first compare it against the current code so you do not re-implement completed work.
 
+Current cross-project performance maintenance version: `2026.07.17.1`.
+
 ```text
 You are an autonomous senior coding agent working on the user's Windows machine. Your job is to fully implement, test, document, and prepare deployment for the advanced JM API reader optimizations. Do not stop at analysis or a plan. Continue until complete delivery, unless a required external tool is missing.
 
 Current date: 2026-07-07.
 
 Project paths:
-- API project: D:\jm\jm-boom-master\jmcomic-api-main
-- API main file: D:\jm\jm-boom-master\jmcomic-api-main\index.php
-- API Dockerfile: D:\jm\jm-boom-master\jmcomic-api-main\Dockerfile
-- API compose: D:\jm\jm-boom-master\jmcomic-api-main\docker-compose.yml
-- API entrypoint: D:\jm\jm-boom-master\jmcomic-api-main\docker-entrypoint.sh
-- API README: D:\jm\jm-boom-master\jmcomic-api-main\README.md
-- Advanced design: D:\jm\jm-boom-master\jmcomic-api-main\docs\advanced-reader-optimization-design.md
-- Existing API design: D:\jm\jm-boom-master\jmcomic-api-main\docs\optimization-design.md
+- API project: D:\jm\jmcomic-api-main
+- API main file: D:\jm\jmcomic-api-main\index.php
+- API Dockerfile: D:\jm\jmcomic-api-main\Dockerfile
+- API compose: D:\jm\jmcomic-api-main\docker-compose.yml
+- API entrypoint: D:\jm\jmcomic-api-main\docker-entrypoint.sh
+- API README: D:\jm\jmcomic-api-main\README.md
+- Advanced design: D:\jm\jmcomic-api-main\docs\advanced-reader-optimization-design.md
+- Existing API design: D:\jm\jmcomic-api-main\docs\optimization-design.md
 - Extension project: D:\jm\jmapi-extension
 - Extension main source: D:\jm\jmapi-extension\src\zh\jmapi\src\eu\kanade\tachiyomi\extension\zh\jmapi\JmApi.kt
 - Extension DTO source: D:\jm\jmapi-extension\src\zh\jmapi\src\eu\kanade\tachiyomi\extension\zh\jmapi\Dto.kt
 - Extension build file: D:\jm\jmapi-extension\src\zh\jmapi\build.gradle.kts
 
 Must read first:
-1. D:\jm\jm-boom-master\jmcomic-api-main\docs\advanced-reader-optimization-design.md
-2. D:\jm\jm-boom-master\jmcomic-api-main\docs\optimization-design.md
-3. D:\jm\jm-boom-master\jmcomic-api-main\index.php
-4. D:\jm\jm-boom-master\jmcomic-api-main\Dockerfile
-5. D:\jm\jm-boom-master\jmcomic-api-main\docker-compose.yml
-6. D:\jm\jm-boom-master\jmcomic-api-main\docker-entrypoint.sh
+1. D:\jm\jmcomic-api-main\docs\advanced-reader-optimization-design.md
+2. D:\jm\jmcomic-api-main\docs\optimization-design.md
+3. D:\jm\jmcomic-api-main\index.php
+4. D:\jm\jmcomic-api-main\Dockerfile
+5. D:\jm\jmcomic-api-main\docker-compose.yml
+6. D:\jm\jmcomic-api-main\docker-entrypoint.sh
 7. D:\jm\jmapi-extension\src\zh\jmapi\src\eu\kanade\tachiyomi\extension\zh\jmapi\JmApi.kt
 8. D:\jm\jmapi-extension\src\zh\jmapi\src\eu\kanade\tachiyomi\extension\zh\jmapi\Dto.kt
 9. D:\jm\jm-boom-master\src-tauri\src\reader\page.rs
@@ -175,13 +177,13 @@ Implementation requirements:
 - Keep docs\advanced-reader-optimization-design.md accurate if implementation differs.
 
 Required static checks:
-powershell -ExecutionPolicy Bypass -File D:\jm\jm-boom-master\jmcomic-api-main\tests\page-endpoint-contract.ps1
-powershell -ExecutionPolicy Bypass -File D:\jm\jm-boom-master\jmcomic-api-main\tests\docker-runtime-contract.ps1
-powershell -ExecutionPolicy Bypass -File D:\jm\jm-boom-master\jmcomic-api-main\tests\list-endpoint-contract.ps1
+powershell -ExecutionPolicy Bypass -File D:\jm\jmcomic-api-main\tests\page-endpoint-contract.ps1
+powershell -ExecutionPolicy Bypass -File D:\jm\jmcomic-api-main\tests\docker-runtime-contract.ps1
+powershell -ExecutionPolicy Bypass -File D:\jm\jmcomic-api-main\tests\list-endpoint-contract.ps1
 powershell -ExecutionPolicy Bypass -File D:\jm\jmapi-extension\tests\extension-contract.ps1
 
 Required Docker runtime verification when Docker is available:
-cd D:\jm\jm-boom-master\jmcomic-api-main
+cd D:\jm\jmcomic-api-main
 docker compose build
 docker compose up -d --force-recreate
 curl -i "http://localhost:8088/?health=1"
@@ -214,7 +216,7 @@ Final response requirements:
 - Tests passed, with command names.
 - Runtime checks passed or could not run, with exact reason.
 - Docker redeploy commands:
-  cd D:\jm\jm-boom-master\jmcomic-api-main
+  cd D:\jm\jmcomic-api-main
   docker compose up -d --build --force-recreate
   docker logs jmcomic-api
   curl "http://localhost:8088/?health=1"
