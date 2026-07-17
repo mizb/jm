@@ -90,10 +90,10 @@ foreach ($snippet in @(
     'scalarInt',
     'listArray',
     'stringList',
-    'PayloadNormalizer::scalarString($data[''id''] ?? $fallbackAlbumId)',
+    'PayloadNormalizer::identifierString($data[''id''] ?? $fallbackAlbumId)',
     'PayloadNormalizer::listArray($data[''series''] ?? [])',
     'normalizeChapterImages($data[''images''])',
-    'PayloadNormalizer::scalarString($item[''id''] ?? $item[''aid''] ?? $item[''AID''] ?? '''')'
+    'PayloadNormalizer::identifierString($item[''id''] ?? $item[''aid''] ?? $item[''AID''] ?? '''')'
 )) {
     Assert-Contains $source $snippet $snippet
 }
@@ -105,11 +105,12 @@ Assert-Matches $source 'fromApiResponse\(array \$data,\s*string \$scrambleId,\s*
 Assert-Matches $source '\$rawResponsePhotoId === null[\s\S]*?trim\(\$rawResponsePhotoId\) === ''''[\s\S]*?\$responsePhotoId = \$requestedPhotoId' 'missing or empty upstream chapter id falls back to requested id'
 Assert-Matches $source 'is_string\(\$rawResponsePhotoId\)\s*\|\|\s*is_int\(\$rawResponsePhotoId\)[\s\S]*?\$responsePhotoId = \(string\) \$rawResponsePhotoId' 'string and integer upstream chapter ids share one canonical string validator'
 Assert-Matches $source '\$responsePhotoId !== \$requestedPhotoId' 'present upstream chapter id must match requested id'
+Assert-Matches $source 'function identifierString\(mixed \$value,[\s\S]*?is_string\(\$value\)\s*\|\|\s*is_int\(\$value\)[\s\S]*?return \$default' 'upstream identifiers accept only strings or integers before role-specific validation'
 Assert-Contains $source 'isUnsupportedHomeSection(PayloadNormalizer::scalarString($section[''title''] ?? ''''))' 'promote section title is scalar-normalized'
 Assert-Contains $source '$itemId = PayloadNormalizer::scalarString($item[''id''] ?? $item[''aid''] ?? $item[''AID''] ?? '''')' 'promote item id is scalar-normalized'
-Assert-Contains $source 'PayloadNormalizer::scalarString($category[''id''] ?? '''')' 'weekly category id is scalar-normalized'
-Assert-Contains $source 'PayloadNormalizer::scalarString($type[''id''] ?? '''')' 'weekly type id is scalar-normalized'
-Assert-Contains $source '$redirectAid = PayloadNormalizer::scalarString($payload[''redirect_aid''] ?? '''')' 'search redirect aid is scalar-normalized'
+Assert-Contains $source 'PayloadNormalizer::identifierString($category[''id''] ?? '''')' 'weekly category id is identifier-normalized'
+Assert-Contains $source 'PayloadNormalizer::identifierString($type[''id''] ?? '''')' 'weekly type id is identifier-normalized'
+Assert-Contains $source 'PayloadNormalizer::identifierString($rawRedirectAid ?? '''')' 'search redirect aid is identifier-normalized'
 Assert-Contains $source 'private static function listItemFromPayload' 'list item mapper centralizes empty-id filtering'
 Assert-Contains $source 'if ($mappedItem->id === '''') return null;' 'list item mapper skips payloads without usable ids'
 Assert-Contains $source 'private static function payloadItemCount' 'list pagination keeps raw payload item counts separate from valid mapped items'
