@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.17.4';
+    public const APP_VERSION    = '2026.07.17.5';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -3337,12 +3337,15 @@ final class JmChapter
         if (preg_match('/^\d{1,20}$/', $requestedPhotoId) !== 1) {
             throw new MalformedChapterException('Malformed requested chapter photo id', 502);
         }
-        $responsePhotoId = $data['id'] ?? null;
-        if ($responsePhotoId === null || (is_string($responsePhotoId) && trim($responsePhotoId) === '')) {
+        $rawResponsePhotoId = $data['id'] ?? null;
+        if ($rawResponsePhotoId === null || (is_string($rawResponsePhotoId) && trim($rawResponsePhotoId) === '')) {
             $responsePhotoId = $requestedPhotoId;
+        } elseif (is_string($rawResponsePhotoId) || is_int($rawResponsePhotoId)) {
+            $responsePhotoId = (string) $rawResponsePhotoId;
+        } else {
+            throw new MalformedChapterException('Malformed chapter photo id', 502);
         }
-        if (!is_string($responsePhotoId)
-            || preg_match('/^\d{1,20}$/', $responsePhotoId) !== 1
+        if (preg_match('/^\d{1,20}$/', $responsePhotoId) !== 1
             || $responsePhotoId !== $requestedPhotoId
         ) {
             throw new MalformedChapterException('Malformed chapter photo id', 502);

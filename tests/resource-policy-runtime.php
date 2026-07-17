@@ -1324,6 +1324,11 @@ function testChapterPhotoIdMustBeOneToTwentyDigitsAndMatchTheRequestedId(): void
         resourceAssertSame($validId, $chapter->photoId, 'valid chapter id boundary changed');
     }
 
+    $numericPayload = chapterPayload([]);
+    $numericPayload['id'] = 350234;
+    $numericChapter = JmChapter::fromApiResponse($numericPayload, '220980', '350234');
+    resourceAssertSame('350234', $numericChapter->photoId, 'integer upstream chapter id was not normalized safely');
+
     foreach (['missing', 'null', 'empty', 'space'] as $fallbackCase) {
         $payload = chapterPayload([]);
         if ($fallbackCase === 'missing') unset($payload['id']);
@@ -1337,7 +1342,7 @@ function testChapterPhotoIdMustBeOneToTwentyDigitsAndMatchTheRequestedId(): void
     $invalid = [
         'twenty-one-digits' => str_repeat('9', 21),
         'letters' => '35a234',
-        'number' => 350234,
+        'float' => 350234.0,
         'boolean' => true,
         'array' => ['350234'],
     ];
@@ -1536,7 +1541,10 @@ function testChapterServiceUsesOnlyStrictV2CacheKeysAndPayloads(): void
 
     putenv('JM_TEST_ALLOWED_HOSTS=api.example.test');
     $context = RequestContext::forTest('chapter-cache-v2', 12000, 6);
-    $transport = new ResourceChapterTransport(chapterPayload(['00001.jpg']));
+    $numericChapterPayload = chapterPayload(['00001.jpg']);
+    $numericChapterPayload['id'] = 350234;
+    $numericChapterPayload['series'][0]['id'] = 350234;
+    $transport = new ResourceChapterTransport($numericChapterPayload);
     $api = JmApiClient::forTest($context, $transport, ['https://api.example.test']);
     $service = new JmService(context: $context, api: $api, cache: $cache);
     $oldKey = $context->testCacheNamespace() . 'chapter:' . md5('350234:220980');
@@ -1544,6 +1552,7 @@ function testChapterServiceUsesOnlyStrictV2CacheKeysAndPayloads(): void
 
     $first = $service->fetchChapter('350234', '220980');
     resourceAssertSame(1, $transport->calls, 'legacy chapter cache key was read');
+    resourceAssertSame('350234', $first->photoId, 'encrypted integer chapter id was not normalized through the service');
     resourceAssertSame('00001.jpg', $first->images[0]['filename'] ?? null, 'fresh chapter payload changed');
 
     $expectedKey = $context->testCacheNamespace() . 'chapter:v2:' . hash('sha256', '350234:220980');

@@ -26,7 +26,7 @@ docker compose up -d --build
 
 ```text
 ghcr.io/<你的GitHub用户名>/<仓库名>:latest
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.4
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.5
 ```
 
 如果要直接使用 GHCR 镜像，可以把 `docker-compose.yml` 中的 `build` 删除，并把 `image` 改成你的镜像名：
@@ -39,7 +39,7 @@ services:
     ports:
       - "8088:8088"
     environment:
-      JM_API_VERSION: "2026.07.17.4"
+      JM_API_VERSION: "2026.07.17.5"
       JM_REQUEST_BUDGET_MS: "12000"
       JM_MAX_UPSTREAM_ATTEMPTS: "15"
       JM_LIST_CACHE_TTL: "60"
@@ -106,7 +106,7 @@ docker image inspect ghcr.io/<你的GitHub用户名>/<仓库名>:latest --format
 如果想完全避免 `latest` 缓存误判，可以把 compose 里的镜像固定为：
 
 ```text
-ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.4
+ghcr.io/<你的GitHub用户名>/<仓库名>:2026.07.17.5
 ```
 
 启动后检查服务：
@@ -129,7 +129,7 @@ docker logs jmcomic-api
 看到类似下面这行，就能判断容器加载的是哪一版：
 
 ```text
-JM API version 2026.07.17.4
+JM API version 2026.07.17.5
 ```
 
 `health=1` 会返回顶层 `version` 和 `diagnostics.app_version`。所有响应也会带 `X-JM-API-Version` 头，所以直接 `php -S` 和 Docker 启动都能通过接口确认当前运行版本。
@@ -382,9 +382,9 @@ GET /?jmid=350234&chapter=413446
 {
   "code": 200,
   "success": true,
-  "version": "2026.07.17.4",
+  "version": "2026.07.17.5",
   "diagnostics": {
-    "app_version": "2026.07.17.4",
+    "app_version": "2026.07.17.5",
     "php": "8.5.7",
     "apcu": true,
     "apcu_details": {
@@ -502,7 +502,7 @@ Redis 不可用时优雅降级 — 不限流。
 ```
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
-X-JM-API-Version: 2026.07.17.4
+X-JM-API-Version: 2026.07.17.5
 X-JM-Cache: HIT|MISS
 X-JM-Image-Codec: webp|jpeg|gif|png|original
 X-JM-Singleflight: hit|owner|hit-after-wait|timeout|disabled

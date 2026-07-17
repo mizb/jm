@@ -2,11 +2,11 @@
 
 日期：2026-07-17  
 范围：`D:\jm\jmcomic-api-main`、`D:\jm\jmapi-extension`  
-状态：**API `2026.07.17.4` 已修复本次 Latest 502 的直接根因：真实 `/week` 使用 `hanman / another / manga` 字母型 type ID，而新版错误要求纯数字；同时保留每域三次/最多 15 次及 12 秒总预算。针对性完整 weekly 链路已返回 200；v1.4.15 APK 无需变更。`.2 / 7A2AC07A…70484` 的性能结果只作为 `.4` 前历史证据保留；Docker 多 worker/fault 实跑和 `.4` 用户现场仍待外部环境。**
+状态：**API `2026.07.17.5` 保留 `.4` 的 weekly type slug 修复，并修正真实章节 JSON 整数 ID 被严格 string 校验误判为 `MalformedChapterException` 的兼容回归；每域三次/最多 15 次及 12 秒总预算不变。数字 ID 的解析与加密服务链已 RED→GREEN；v1.4.15 APK 无需变更。`.2 / 7A2AC07A…70484` 的性能结果只作为历史证据保留；Docker 多 worker/fault 实跑和 `.5` 同一章节现场仍待外部环境。**
 
 ## 1. 结论与边界
 
-- API 交付版本：`2026.07.17.4`，`index.php=E263D5A8…4E7E`。
+- API 交付版本：`2026.07.17.5`，`index.php=A14992F3…1205`。
 - 扩展交付版本：`1.4.15`，`versionCode = 15`。
 - 筛选显示已固定为中文：`排序 / 最新 / 最多浏览 / 最多点赞`。
 - Popular 固定映射 `list=promote`，Latest 固定映射 `list=weekly`；空搜索、标题搜索和 JM ID/URL 搜索契约均已在 Suwayomi 实际请求中验证。
@@ -14,6 +14,7 @@
 - 已从 Codex 原始补丁日志逆向恢复 pre-change 源码，并逐文件命中行为修改前记录的四个 SHA-256；获批的 loopback-only 透明 HTTPS harness 已对恢复版 `A88271DC…7A13ED` 与 `.2 / index.php=7A2AC07A…70484` 完成同条件成功路径 A/B。该证据不能改标为当前 `.3`。
 - 当前哈希 A/B 中，fixture 上游请求 `397 → 7`（减少 `98.237%`）；latest page 1/page 4/album p50 分别改善 `31.203% / 35.324% / 37.311%`，五路由 p99 均改善；health 与图片 p50/p95 回退。10 客户端图片队列 wall `100.018ms → 102.554ms`，本次回退 `2.536%`。这些结果只覆盖确定性 loopback、Windows PHP built-in 单 worker。
 - 2026-07-17 现场出现老版正常而新版 Latest 返回 HTTP 502。`.3` 恢复老版重试窗口后，用户日志仍显示约 1 秒内 generic JmException 502 且无网络失败记录。直接解密真实 `/week` 后确认 category 为数字、type 为字母 slug；严格校验误把成功 payload 当故障。`.4` 分离两类 ID 契约，并继续保留 12 秒 wall budget；JSON/解密/业务错误仍不切域。
+- `.4` 部署后的下一条现场日志明确变为 `MalformedChapterException`。对照老版与 Java 解析器发现当前章节 `id` 错误要求原生 string；`.5` 只增加 JSON int → canonical decimal string，并继续执行 requested-ID 等值及 1～20 位校验。浮点、布尔、数组、超长、非数字和错 ID 仍失败关闭；现场恢复仍以同一章节返回 200 为准。
 - 早先绑定 `2026.07.13.2 / index.php=680AF597…18FB7C` 的 A/B 继续作为独立历史证据保留；不得与当前哈希结果混用。
 - 两个目录都没有 `.git`。文件清单来自当前文件系统和实施计划，不是 Git diff；不伪造提交、提交哈希或版本历史。
 - 两个交付项目分别是 PHP 和 Kotlin/Android 项目，没有 `go.mod` 或 Go 源码。将其改写为 Go 会改变既定部署/API 架构，本轮未擅自迁移；“使用最新 Go”对当前两项目不适用。
@@ -78,20 +79,22 @@
 
 | 文件 | SHA-256 |
 |---|---|
-| `jmcomic-api-main/index.php` | `E263D5A8CB6B2678E417E344610786F5BF32E767CEB72CF8C5F202041AD84E7E` |
-| `jmcomic-api-main/Dockerfile` | `974D48BF363E3D1216CC3BA90E3F4336ED7129A8D074E9E34C1AEBD06F36F8B8` |
-| `jmcomic-api-main/docker-compose.yml` | `CB3D4B8AB225D7C8A079E2DCB898595CAE3B8C2CDAAD05DDF3FE47C763184607` |
+| `jmcomic-api-main/index.php` | `A14992F3358DD3C744575A7BAD291D00B8F907A46B5E8FF5D2786CEEC7F71205` |
+| `jmcomic-api-main/Dockerfile` | `A8DA577DE7AB1A0657282473B664F961BC7D55D0FE96F51169438AE9133715D5` |
+| `jmcomic-api-main/docker-compose.yml` | `A09DF99EFD5F86ABD7F79389C499DEE208A0694ED017367BD92CAAC47EFB2D93` |
 | `jmcomic-api-main/docker-compose.test.yml` | `ED29DE1F902F37BE99B6A62406A61571AA0714B11C64A1E7E04AD78984B95C94` |
-| `jmcomic-api-main/docker-entrypoint.sh` | `4DDF1ACEF712AAAD8B87DDCCDA7A7FE7AD2240FB9BCD20F7D469E208DBB50079` |
-| `jmcomic-api-main/README.md` | `7B78952D3B2E6CE8EDFD37C0F0BE70F66E8F4A7AC19F91A825A3A1E8B551BB49` |
-| `jmcomic-api-main/.github/workflows/docker-build.yml` | `DA1FE9FA94935EE7699D77B0BA085DE669BE7DD273A86CCC1F8930C0508FB627` |
+| `jmcomic-api-main/docker-entrypoint.sh` | `8CB265EB411772AA6AB016F97CC873121774E9DA77E3A57E77E1DC89E6C40AAD` |
+| `jmcomic-api-main/README.md` | `F06FE723A3A20F89F45ECACE8B5EE3402706CE83FB620B2AE1BE93E0ED4F4EA9` |
+| `jmcomic-api-main/.github/workflows/docker-build.yml` | `CE54D5006AB08FF55EB6F4A7803743EA03B87E7CC5D0DBCA8E21D24995F877C3` |
 | `scripts/performance-baseline.ps1` | `C4B65EA3CC810F0E3C5E20523A5E389C0B303B0539263A40138A054E18C0A65F` |
 | `scripts/performance-evidence.ps1` | `35238705319F7E7344F200A2D85D71C903124FA8BF52A304350C01CBD342D5F0` |
 | `scripts/runtime-verify.ps1` | `68F2DF3C4CDAC6593DBDF846B2668E080FB6971E3A72835B3D7B09DD74D542BE` |
 | `scripts/transparent-https-performance.ps1` | `CC3362851AEC1E209ABC66BB7B419DFC5DF9DB7F93A6ABB5A4CEE36895BEF6D9` |
 | `tests/upstream-policy-runtime.php` | `D256E8C1F83F478AD4107FF49B044FA62F2DCAB0B4CCFFD410FFAAB9D3E9359D` |
 | `tests/fault-injection-runtime.ps1` | `D4C766A4CF00734ACF6EC7E7C51F21E0D03B18BA20EEBE8347077CC819C79D3F` |
-| `tests/docker-runtime-contract.ps1` | `41047DD5A07505995DD601D182F28122A7977E86432FE34E34507C07B9B7D4BD` |
+| `tests/docker-runtime-contract.ps1` | `B3DC73AAE23887CC128052437F9CC85A02BA464C0914503DCE4074609A070468` |
+| `tests/resource-policy-runtime.php` | `97CF774AA8DCDE2674E047546D7FBB3F8979F978CB3FACD7FA0C96457DBFD516` |
+| `tests/adoption-hardening-contract.ps1` | `8C54F98B4AD1317B2726A82E875926C21FC0442059AA552C7F2754988CCEEF69` |
 | `tests/performance-policy-contract.ps1` | `EB80021C25EC2BF38D3C6EAA04F941FECDE99C160C79B4E572C15E9BFB966E03` |
 | `tests/fixtures/transparent_https_proxy.py` | `CD97F28D9577A13BA47CA7D79E017611A2993BC96213BD5CF105FB95879808E2` |
 | `tests/fixtures/transparent_https_probe.php` | `A3A41A8D61CE5264D41590E77EF3E50F49D255BB8C63611A0DCC354A37AB2F0F` |
@@ -100,12 +103,12 @@
 | `tests/transparent-https-performance-runtime.ps1` | `BAEA9275BD25A990C5C94DE8625FD60CA7DA85B8EC6C484A10B55002DE078123` |
 | `docs/superpowers/specs/2026-07-17-transparent-https-performance-harness-design.md` | `4E1755D3C2FB8FF0BBDE34077E6BB1F7B4377478AFC1F02A845454A334863D52` |
 | `docs/superpowers/plans/2026-07-17-transparent-https-performance-harness.md` | `5696EBAFEB40CF49E33DB787184F4BB9C8A1B8709ABC66B048E655381EEA998C` |
-| `docs/superpowers/specs/2026-07-13-cross-project-performance-design.md` | `500F73EA012ED2AD19DC970BE9B7447183558E3A6658302E9E9C23F6718F5BC6` |
+| `docs/superpowers/specs/2026-07-13-cross-project-performance-design.md` | `0010766E5B138E5B8D5C9A84DE12C547A49E843ACC9122D82B51C7E81BFC03B8` |
 | `docs/superpowers/plans/2026-07-13-cross-project-performance-delivery.md` | `415D9AF0A7AB6C6B7DD8E8FE8EEDAD83449AF4B1465CC17B20EFC4AAAC1488A6` |
 | `docs/superpowers/specs/2026-07-17-upstream-retry-compatibility-design.md` | `6B93D60AFD64FA699C24850F015330335F7E86619BB6DBEA74461F13EC1061DE` |
 | `docs/superpowers/plans/2026-07-17-upstream-retry-compatibility.md` | `25C9191E600D6548CB099BC6EACB9DA59D1AD61186A812B0FA26930D9759CE0E` |
-| `docs/bug-hunt-2026-07-17.md` | `3EF7760A56E2D95D7439006CB0D22057B56EE058D6632DE44A719C376E612C3E` |
-| `docs/ai-delivery-prompt.md` | `307AD671071EF4BA77D736921D24595C56AEFDC0035B1C284CDD4EB13D73F6D1` |
+| `docs/bug-hunt-2026-07-17.md` | `B29CCD79F21BB3C421D78103FF1967729152F8DE769C2635BA7667A11F7B5F97` |
+| `docs/ai-delivery-prompt.md` | `5F6EA6FE3BAE5FFFCE3DB7174080B662E41E295FAB5E33672729B30755EF28E0` |
 | `performance-evidence/transparent-https-common-ab-20260717.json` | `47044F43CF37BF16E77F2B8C6DEA76A28FF0C74E348C6890FD80B0179CAB8B77` |
 | `performance-evidence/transparent-https-current-smoke-20260717.json` | `049CF4F97721D49BD2FE2A889F9805D92895B7BA1083A35C27C42A63F8C64C51` |
 | `performance-evidence/transparent-https-current-ab-20260717.json` | `6ECB423EFE3A2B66B196B1AEC9D15D96CA8F1DB0732ABD01181A24F5CDB2F9B5` |
@@ -117,16 +120,16 @@
 
 | 文件 | SHA-256 |
 |---|---|
-| `jmapi-extension/README.md` | `48B08C11F7B9AB77A3835FE1CCEE823A2B686DABC0E88A18A0ADF5DF8BA648A5` |
+| `jmapi-extension/README.md` | `CF6FB612896B118D4B34A0C4FCDC6E6177460FA19D1B8B47E0FC8A4902F65652` |
 | `src/zh/jmapi/build.gradle.kts` | `955A6AB1E5B41C47CC46C11BE5A1351121933FA85B3158701D57D042D583E461` |
 | `src/zh/jmapi/src/eu/kanade/tachiyomi/extension/zh/jmapi/JmApi.kt` | `B7BCD1617B5277868D0A0ABEE6060D4613F2D4D54BF5667366B0532308316E3D` |
-| `tests/extension-contract.ps1` | `AB272C755997DEA7EF50E1E9867FB2A3C33C8B817213198BFC9ADD7A77AC8C57` |
+| `tests/extension-contract.ps1` | `99FBA16A25DD063CD361ECC6CAAFAAB9B0EB2749D73BF1ABBBFCEE7CA7D2B644` |
 | `tests/extension-safety-contract.ps1` | `6E7752F7AFCFC810289E7A99F3FBD7EB684BE950618259A8E5FC4F28FF71A741` |
 | `scripts/build-with-keiyoushi.ps1` | `79F27AE74020352784068EE020BD7A25EB3874341E96D144932B301CE77ECAC3` |
 | `scripts/generate-repo-metadata.ps1` | `FD37F1EBFBD604B2F6345B4B0416425BF108D48D505B155A614574D470D32D1E` |
 | `scripts/path-safety.ps1` | `2FD3C44A58B4EE046EA1B5F5B0FF95C115359165A176426A73D0CC678F18411E` |
 | `docs/apk-optimization-design.md` | `B3BDB1DAD4D9ABD61C9C7A0269BB4454466FAE13C4C32EC4B32C89B4E3A9A22F` |
-| `docs/ai-delivery-prompt.md` | `A999C21C161934CB4EF743ACC029968447B12401C637F2842EACC9FCF8FCD01B` |
+| `docs/ai-delivery-prompt.md` | `3BA7D5DB4D9696C91ED5C35F4046FE0E6EDF534528F55F29F23C7DE774768930` |
 | `dist-local/apk/tachiyomi-zh.jmapi-v1.4.15.apk` | `A1FD20677F53784CEAED728BCFC0A44E40DD53D35C47A582E1A3195D51B57872` |
 | `dist-local/index.min.json` | `A387CFCB4AD236E92114AFD4B29583E011B1CEB94AFB11C269F4BA348811D8BC` |
 | `dist-local/index.json` | `A387CFCB4AD236E92114AFD4B29583E011B1CEB94AFB11C269F4BA348811D8BC` |
@@ -192,8 +195,8 @@
 | Task 6 预取预算与去重 | authority flock、APCu 镜像重建、foreign token、续租、slot、wall/byte/active、`prefetch=0` 和预算停止原因测试通过 | 本机策略完成；compose 多 worker overlap 待 Docker |
 | Task 7 CDN/图片/Redis | chapter/manifest v2、相对路径、CDN failover、压缩字节/像素/容器/解码边界 71/71；真实 Redis 16 worker 原子限流通过 | 完成 |
 | Task 8 扩展修复 | 中文化、URL builder/basePath、ID/章节、页面 URL 权威来源和预取双向同步合同通过；v1.4.15 构建、元数据、签名和 Suwayomi 实际请求通过 | 完成 |
-| Task 9 版本与文档 | API 统一 `2026.07.17.4`；扩展 README/Gradle/APK/index 统一 v1.4.15/code 15 | 完成 |
-| Task 10 完整验证 | `.4` 上游策略、真实字段型单元回归、完整 weekly fixture、相关静态合同与 PHP lint通过；正式 A/B 与 after-only 深度证据绑定 `.2` 保留 | `.4` 本机相关回归完成并等待部署现场复验；Docker runtime/fault matrix 仍受外部环境阻塞 |
+| Task 9 版本与文档 | API 统一 `2026.07.17.5`；扩展 README/Gradle/APK/index 统一 v1.4.15/code 15 | 完成 |
+| Task 10 完整验证 | `.5` 上游策略、weekly slug、章节整数 ID、加密章节服务链、相关静态合同与 PHP lint通过；正式 A/B 与 after-only 深度证据绑定 `.2` 保留 | `.5` 本机相关回归完成并等待同一章节现场复验；Docker runtime/fault matrix 仍受外部环境阻塞 |
 
 Git 提交步骤属于所有 Task 的条件性步骤。两个目标目录从开始到当前都没有 `.git`，因此这些步骤按计划 Preflight 第 49 行记录为“不适用/不可执行”，不能用无来源提交代替。
 
@@ -405,15 +408,15 @@ D:\jm\jmapi-extension\dist-local\
 
 - **代码优化：完成。**
 - **本机可执行验收：完成。**
-- **APK 与 Suwayomi 实际回归：完成。**
+- **APK 与既有 Suwayomi 实际回归：完成；`.5` 同一章节现场复验待用户容器。**
 - **pre-change 源码恢复：完成；四个权威 SHA-256 全部命中。**
 - **Docker 多 worker 验收：外部阻塞。**
 - **历史同条件运行态 BEFORE/AFTER：绑定 `A88271DC…7A13ED → 680AF597…18FB7C` 的旧证据保留。**
-- **性能 A/B：绑定 `A88271DC…7A13ED → 7A2AC07A…70484` 的 `.2` 结果已完成并独立重算；当前 `.4 / E263D5A8…4E7E` 未重跑性能矩阵，不能继承 `.2` 标签。**
+- **性能 A/B：绑定 `A88271DC…7A13ED → 7A2AC07A…70484` 的 `.2` 结果已完成并独立重算；当前 `.5 / A14992F3…1205` 未重跑性能矩阵，不能继承 `.2` 标签。**
 - **生产签名：发布治理待用户提供稳定密钥。**
 
 除非代码、配置、APK 或外部条件发生变化，后续 AI 不应重做本报告已经有新鲜证据的本机工作。
 
 ## 10. 给后续 AI 的简短提示词
 
-> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先核对 API `2026.07.17.4 / E263D5A8…4E7E`，并把 `.2` A/B `31FC02D2…24C9` 和 after-only `F709B6EE…928E5` 视为历史性能证据；未变化时不要重做 APK/Suwayomi/本机性能矩阵。强制重建 `.4` 并现场验证 Latest，失败时按 request-id 最小修复；具备 Docker 后完成 runtime/fault matrix，严守固定契约，禁止伪造 Git、签名或性能百分比。
+> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。先核对 API `2026.07.17.5 / A14992F3…1205`，并把 `.2` A/B `31FC02D2…24C9` 和 after-only `F709B6EE…928E5` 视为历史性能证据；未变化时不要重做 APK/Suwayomi/本机性能矩阵。强制重建 `.5` 并现场验证 Latest 与同一章节，失败时按 request-id 最小修复；具备 Docker 后完成 runtime/fault matrix，严守固定契约，禁止伪造 Git、签名或性能百分比。
