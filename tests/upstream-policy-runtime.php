@@ -90,7 +90,7 @@ function context(int $budgetMs = 1500, int $attempts = 6): RequestContext
     return RequestContext::forTest('policy-test', $budgetMs, $attempts);
 }
 
-assertSameValue(15, JmConfig::DEFAULT_MAX_UPSTREAM_ATTEMPTS, 'production default preserves three bounded attempts per domain');
+assertSameValue(15, JmConfig::DEFAULT_MAX_UPSTREAM_ATTEMPTS, 'production default preserves three bounded five-domain rounds');
 
 function transientRequestId(): string
 {
@@ -122,7 +122,7 @@ function assertNetworkFailover(int $errno, string $category): void
     assertSameValue(['category' => $category], $client->callJson('/latest', ['page' => '0'])['data'], $category . ' failover payload');
     assertSameValue(2, $transport->calls, $category . ' failover attempts');
     assertSameValue('primary.test', (string) parse_url($transport->seenUrls[0], PHP_URL_HOST), $category . ' starts on primary');
-    assertSameValue('primary.test', (string) parse_url($transport->seenUrls[1], PHP_URL_HOST), $category . ' retries the primary');
+    assertSameValue('secondary.test', (string) parse_url($transport->seenUrls[1], PHP_URL_HOST), $category . ' rotates within the first round');
 }
 
 $connectThenSuccess = new SequenceTransport(
@@ -132,11 +132,11 @@ $connectThenSuccess = new SequenceTransport(
 $ctx = context();
 $client = JmApiClient::forTest($ctx, $connectThenSuccess, ['https://primary.test', 'https://secondary.test']);
 $decoded = $client->callJson('/latest', ['page' => '0']);
-assertSameValue(['items' => []], $decoded['data'], 'connect failure retries the primary and succeeds');
+assertSameValue(['items' => []], $decoded['data'], 'connect failure rotates within the first round and succeeds');
 assertSameValue(2, $connectThenSuccess->calls, 'connect failure attempt count');
 assertSameValue(2, $ctx->diagnostics()['upstream_attempts'], 'context attempt count');
 assertSameValue('primary.test', (string) parse_url($connectThenSuccess->seenUrls[0], PHP_URL_HOST), 'connect first domain');
-assertSameValue('primary.test', (string) parse_url($connectThenSuccess->seenUrls[1], PHP_URL_HOST), 'connect retries the primary domain');
+assertSameValue('secondary.test', (string) parse_url($connectThenSuccess->seenUrls[1], PHP_URL_HOST), 'connect rotates to the secondary domain');
 assertNetworkFailover(CURLE_COULDNT_RESOLVE_HOST, 'dns');
 assertNetworkFailover(CURLE_SSL_CONNECT_ERROR, 'tls');
 assertNetworkFailover(CURLE_OPERATION_TIMEDOUT, 'timeout');
@@ -159,7 +159,7 @@ $client = JmApiClient::forTest(
 assertSameValue(
     ['recovered' => true],
     $client->callJson('/latest', ['page' => '0'])['data'],
-    'per-domain transient failures use the sixth bounded attempt on the secondary domain',
+    'all-domain transient failures use the sixth bounded attempt on the next round primary',
 );
 assertSameValue(6, $allDomainsTransientThenPrimaryRecovers->calls, 'bounded all-domain recovery attempt count');
 $allDomainRecoveryHosts = array_map(
@@ -167,9 +167,9 @@ $allDomainRecoveryHosts = array_map(
     $allDomainsTransientThenPrimaryRecovers->seenUrls,
 );
 assertSameValue(
-    ['primary.test', 'primary.test', 'primary.test', 'secondary.test', 'secondary.test', 'secondary.test'],
+    ['primary.test', 'secondary.test', 'one.test', 'two.test', 'three.test', 'primary.test'],
     $allDomainRecoveryHosts,
-    'network failures preserve three bounded attempts per domain',
+    'network failures rotate across every domain before the next round',
 );
 
 $fifteenAttemptCompatibilityWindow = new SequenceTransport(
@@ -196,14 +196,12 @@ $compatibilityHosts = array_map(
 );
 assertSameValue(
     [
-        'primary.test', 'primary.test', 'primary.test',
-        'secondary.test', 'secondary.test', 'secondary.test',
-        'one.test', 'one.test', 'one.test',
-        'two.test', 'two.test', 'two.test',
-        'three.test', 'three.test', 'three.test',
+        'primary.test', 'secondary.test', 'one.test', 'two.test', 'three.test',
+        'primary.test', 'secondary.test', 'one.test', 'two.test', 'three.test',
+        'primary.test', 'secondary.test', 'one.test', 'two.test', 'three.test',
     ],
     $compatibilityHosts,
-    'fifteen-attempt compatibility window uses three attempts per ordered domain',
+    'fifteen-attempt compatibility window uses three health-ordered domain rounds',
 );
 
 $allScrambleDomainsTransientThenPrimaryRecovers = new SequenceTransport(
@@ -223,7 +221,7 @@ $client = JmApiClient::forTest(
 assertSameValue(
     '220981',
     $client->fetchScrambleId('350234'),
-    'scramble uses the sixth bounded attempt on the secondary domain',
+    'scramble uses the sixth bounded attempt on the next round primary',
 );
 assertSameValue(6, $allScrambleDomainsTransientThenPrimaryRecovers->calls, 'bounded scramble recovery attempt count');
 $scrambleRecoveryHosts = array_map(
@@ -231,9 +229,9 @@ $scrambleRecoveryHosts = array_map(
     $allScrambleDomainsTransientThenPrimaryRecovers->seenUrls,
 );
 assertSameValue(
-    ['primary.test', 'primary.test', 'primary.test', 'secondary.test', 'secondary.test', 'secondary.test'],
+    ['primary.test', 'secondary.test', 'one.test', 'two.test', 'three.test', 'primary.test'],
     $scrambleRecoveryHosts,
-    'scramble network failures preserve three bounded attempts per domain',
+    'scramble network failures rotate across every domain before the next round',
 );
 
 $retry502 = new SequenceTransport(
@@ -244,10 +242,10 @@ $retry502 = new SequenceTransport(
 $ctx = context();
 $client = JmApiClient::forTest($ctx, $retry502, ['https://primary.test', 'https://secondary.test']);
 assertSameValue(['ok' => true], $client->callJson('/latest', ['page' => '0'])['data'], '502 retry policy succeeds');
-assertSameValue(3, $retry502->calls, 'primary retries once before secondary');
+assertSameValue(3, $retry502->calls, '502 retries rotate domains before the next round');
 assertSameValue('primary.test', (string) parse_url($retry502->seenUrls[0], PHP_URL_HOST), '502 first primary attempt');
-assertSameValue('primary.test', (string) parse_url($retry502->seenUrls[1], PHP_URL_HOST), '502 second primary attempt');
-assertSameValue('primary.test', (string) parse_url($retry502->seenUrls[2], PHP_URL_HOST), '502 third attempt remains on primary');
+assertSameValue('secondary.test', (string) parse_url($retry502->seenUrls[1], PHP_URL_HOST), '502 second attempt rotates to secondary');
+assertSameValue('primary.test', (string) parse_url($retry502->seenUrls[2], PHP_URL_HOST), '502 third attempt starts the next round on primary');
 
 foreach (['seconds', 'date', 'invalid'] as $label) {
     $retryAfter = match ($label) {

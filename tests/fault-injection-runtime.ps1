@@ -1483,14 +1483,14 @@ Assert-True ((Count-Key $counts 'api-good|/latest|0|bad-encrypted') -eq 2) 'bad 
 Assert-True ((Count-Key $counts 'api-502|/latest|0|bad-encrypted') -eq 0) 'bad encrypted payload must not reach a secondary domain'
 Assert-True ((Count-Key $counts 'api-timeout|/latest|0|bad-encrypted') -eq 0) 'bad encrypted payload must not reach a third domain'
 
-# Bounded retry: three primary 502 attempts then a secondary success.
+# Bounded round-major retry: one primary 502 then a first-round secondary success.
 $runId = New-RunId
 Reset-Fixture $runId
 $retry = Invoke-CapturedRequest (Api-Url 'list=latest&page=1&format=min' '502-then-valid' $runId)
 Assert-True ($retry.Status -eq 200) '502 failover must succeed on secondary fixture'
-Assert-True ([int] (Header-Value $retry.Headers 'X-JM-Upstream-Attempts') -eq 4) '502 failover must use exactly four attempts'
+Assert-True ([int] (Header-Value $retry.Headers 'X-JM-Upstream-Attempts') -eq 2) '502 failover must use exactly two first-round attempts'
 $counts = Get-FixtureCounts $runId
-Assert-True ((Count-Key $counts 'api-good|/latest|0|502-then-valid') -eq 3) '502 failover must attempt the primary exactly three times'
+Assert-True ((Count-Key $counts 'api-good|/latest|0|502-then-valid') -eq 1) '502 failover must attempt the primary exactly once'
 Assert-True ((Count-Key $counts 'api-502|/latest|0|502-then-valid') -eq 1) '502 failover must attempt the secondary exactly once'
 Assert-True ((Count-Key $counts 'api-timeout|/latest|0|502-then-valid') -eq 0) '502 failover must stop after the successful secondary'
 

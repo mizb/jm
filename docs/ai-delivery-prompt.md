@@ -5,15 +5,17 @@
 ## 权威读取顺序
 
 1. `D:\jm\jmcomic-api-main\docs\performance-delivery-report.md`
-2. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-17-upstream-retry-compatibility-design.md`
-3. `D:\jm\jmcomic-api-main\docs\superpowers\plans\2026-07-17-upstream-retry-compatibility.md`
-4. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-13-cross-project-performance-design.md`
-5. `D:\jm\jmcomic-api-main\docs\superpowers\plans\2026-07-13-cross-project-performance-delivery.md`
-6. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-14-java-reference-adoption-audit.md`
-7. `D:\jm\jmcomic-api-main\docs\bug-hunt-2026-07-17.md`
-8. `D:\jm\jmapi-extension\docs\superpowers\specs\2026-07-17-canonical-page-url-design.md`
-9. `D:\jm\jmapi-extension\docs\apk-optimization-design.md`
-10. `D:\jm\jmapi-extension\docs\ai-delivery-prompt.md`
+2. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-17-domain-round-robin-retry-design.md`
+3. `D:\jm\jmcomic-api-main\docs\superpowers\plans\2026-07-17-domain-round-robin-retry.md`
+4. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-17-upstream-retry-compatibility-design.md`
+5. `D:\jm\jmcomic-api-main\docs\superpowers\plans\2026-07-17-upstream-retry-compatibility.md`
+6. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-13-cross-project-performance-design.md`
+7. `D:\jm\jmcomic-api-main\docs\superpowers\plans\2026-07-13-cross-project-performance-delivery.md`
+8. `D:\jm\jmcomic-api-main\docs\superpowers\specs\2026-07-14-java-reference-adoption-audit.md`
+9. `D:\jm\jmcomic-api-main\docs\bug-hunt-2026-07-17.md`
+10. `D:\jm\jmapi-extension\docs\superpowers\specs\2026-07-17-canonical-page-url-design.md`
+11. `D:\jm\jmapi-extension\docs\apk-optimization-design.md`
+12. `D:\jm\jmapi-extension\docs\ai-delivery-prompt.md`
 
 项目路径固定为：
 
@@ -22,19 +24,19 @@
 
 ## 当前检查点
 
-- API：`2026.07.17.7`。
+- API：`2026.07.17.8`。
 - APK 交付版本：`1.4.15 / versionCode 15`；`1.4.14 / 14` 的反代子路径页面 URL 缺陷仅作为历史 RED 基线。
-- 当前 API `index.php` SHA-256：`1A3FF904F9319E13A7768AF754064F12CC6CE2B35B86406D9DBBBD885948CD7C`；v1.4.15 APK SHA-256：`A1FD20677F53784CEAED728BCFC0A44E40DD53D35C47A582E1A3195D51B57872`。
+- 当前 API `index.php` SHA-256：`72BD180657A4C57F78A6BB1A025CDC01AB91D9954060DBC38D6A8CDF5F2DA72F`；v1.4.15 APK SHA-256：`A1FD20677F53784CEAED728BCFC0A44E40DD53D35C47A582E1A3195D51B57872`。
 - 本机代码、聚焦静态/运行时测试、Keiyoushi 构建、元数据和 Suwayomi 2.3.2243 真实回归已经完成。
 - `.2` 正式同条件性能 A/B 已完成：恢复版 `A88271DC…7A13ED` 对 `.2 / 7A2AC07A…70484`，证据 SHA-256 为 `31FC02D295FF4F5F25CA4C0AEB46DEF1EB73092E7AA095D628002CCFF05524C9`；这是 `.3` 前的历史性能证据，不得改标为 `.3`。
 - 当前 after-only 深度证据 SHA-256 为 `F709B6EE207B5A9DA790D51DC7F6A88C4FDE3D4D23AF51C12C986E9042A928E5`，包含 APCu 碎片与预取单事件利用率；不得外推为长期用户行为。
-- `.7` 保留 `.6` 的 string/int ID 类型门、每域最多三次、300ms 间隔、默认最多 15 次和 12 秒总预算；新增单图内预取 byte cap，并拒绝列表 `total` 的 float、负数和整数溢出。优先重建并核对 `X-JM-API-Version: 2026.07.17.7`、Latest、同一章节和预取统计。
-- 历史透明 HTTPS A/B 分别绑定 `680AF597…18FB7C / 2026.07.13.2`、`.1 / 53A15D40…A3B5C` 和 `.2 / 7A2AC07A…70484`；`.7` 尚无同条件性能 A/B，证据不得混用。
+- `.8` 保留 `.7` 的严格 ID/列表 total、单图内预取 byte cap、最多 15 次和 12 秒共享预算；把 API retryable failure 改为冻结健康排序后按 `A→B→C→D→E` 最多三轮。网络/408/5xx 本轮立即切域，只在第二、三轮边界等待最多 300ms；429 继续遵守受剩余预算约束的 `Retry-After`；其他 HTTP、JSON、解密、业务和 payload 错误立即停止。优先重建并核对 `X-JM-API-Version: 2026.07.17.8`、Latest、同一章节和同 request-id 域名顺序。
+- 历史透明 HTTPS A/B 分别绑定 `680AF597…18FB7C / 2026.07.13.2`、`.1 / 53A15D40…A3B5C` 和 `.2 / 7A2AC07A…70484`；`.8` 尚无同条件性能 A/B，证据不得混用。
 - 两项目没有 Git 元数据；原始修改时间点没有预先测量 BEFORE。不得伪造 diff、commit、基线或提升百分比。
 
 开始时先比较最终报告所列源码与产物哈希：
 
-- 哈希未变化：不要重做 APK、Suwayomi 或历史 A/B；优先完成 `.7` 现场 API 复验和 Docker 外部验收。
+- 哈希未变化：不要重做 APK、Suwayomi 或历史 A/B；优先完成 `.8` 现场 API 复验和 Docker 外部验收。
 - 哈希发生变化：调查变化来源，保留用户改动，按影响范围重新执行合同、运行时、构建和回归，并更新最终报告。
 - Docker 或生产密钥仍不可用：完成其他所有可执行工作后，保留精确错误证据和可复制命令；不要以猜测代替结果。
 - Suwayomi 与 API 若位于不同容器，扩展中的 `127.0.0.1` 指向 Suwayomi 容器自身；必须使用该容器可访问的 API 服务名、平台支持时的 `host.docker.internal` 或局域网地址。
@@ -51,6 +53,7 @@
 - `prefetch=0` 同时禁止普通预取和下一章预热，重新启用时必须移除。
 - 生产 HTTPS/test-mode 白名单、可信代理、CDN allowlist、压缩字节/像素/容器校验和缓存 attestation 不得弱化。
 - `initialized` 不能作为盲目减少请求的开关；当前真实请求证据支持继续使用 API album cache。
+- API retryable failure 必须保持 round-major：一次调用只冻结一次健康排序，外层最多三轮、内层遍历全部域名；不得恢复 `AAA→BBB`，不得把该策略套到图片 CDN failover。
 
 ## 自主执行规则
 
@@ -79,4 +82,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\fault-injection-runt
 
 ## 简短启动提示词
 
-> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`。核对 API `2026.07.17.7 / 1A3FF904…CD7C`，并把 `.2` A/B `31FC02D2…24C9` 与 after-only `F709B6EE…928E5` 视为历史性能证据；未变化时不重做 APK/Suwayomi/本机性能矩阵。先强制重建 `.7` 并验证 Latest、同一章节和预取统计，失败时按 request-id 最小修复；随后完成具备条件的 Docker 验收，严守固定契约。
+> 完整读取并严格执行 `D:\jm\jmcomic-api-main\docs\ai-delivery-prompt.md`，按其中顺序自主执行直到完整交付；核对 API `2026.07.17.8 / 72BD1806…DA72F`，保持 `A→B→C→D→E` 最多三轮及固定预算/错误契约。未变化时不重做 APK、Suwayomi 或历史性能矩阵；优先完成 `.8` 容器与真实现场验收，失败时按 request-id 根因定位、最小修复并相关复测，禁止停在分析或伪造证据。

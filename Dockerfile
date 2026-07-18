@@ -1,7 +1,7 @@
 FROM php:8.3-cli-alpine
 
 WORKDIR /app
-ARG JM_API_VERSION=2026.07.17.7
+ARG JM_API_VERSION=2026.07.17.8
 ARG JM_API_REVISION=unknown
 ENV JM_API_VERSION=$JM_API_VERSION
 LABEL org.opencontainers.image.title="JM Comic Viewer API" \

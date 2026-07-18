@@ -45,7 +45,7 @@ $advancedDesign = Read-ProjectFile 'docs\advanced-reader-optimization-design.md'
 $advancedPrompt = Read-ProjectFile 'docs\advanced-reader-optimization-ai-prompt.md'
 $apiPrompt = Read-ProjectFile 'docs\ai-delivery-prompt.md'
 
-$expectedApiVersion = '2026.07.17.7'
+$expectedApiVersion = '2026.07.17.8'
 
 Assert-Contains $dockerfile 'pecl\s+install\s+apcu' 'APCu installation'
 Assert-Contains $dockerfile 'docker-php-ext-enable\s+apcu' 'APCu enablement'
@@ -92,7 +92,7 @@ Assert-Contains $compose 'JM_DOMAIN_COOLDOWN_SECONDS:\s*"120"' 'domain health co
 Assert-Contains $compose 'JM_DOMAIN_STATS_TTL:\s*"21600"' 'domain health stats TTL'
 Assert-Contains $compose 'PHP_CLI_SERVER_WORKERS:\s*"10"' 'PHP CLI server workers setting'
 Assert-Contains $compose 'JM_REQUEST_BUDGET_MS:\s*"\$\{JM_REQUEST_BUDGET_MS:-12000\}"' 'shared upstream request budget default and override'
-Assert-Contains $compose 'JM_MAX_UPSTREAM_ATTEMPTS:\s*"\$\{JM_MAX_UPSTREAM_ATTEMPTS:-15\}"' 'shared upstream attempt limit defaults to three bounded attempts per domain and accepts an override'
+Assert-Contains $compose 'JM_MAX_UPSTREAM_ATTEMPTS:\s*"\$\{JM_MAX_UPSTREAM_ATTEMPTS:-15\}"' 'shared upstream attempt limit defaults to three bounded five-domain rounds and accepts an override'
 Assert-Contains $compose 'JM_LIST_CACHE_TTL:\s*"\$\{JM_LIST_CACHE_TTL:-60\}"' 'list source cache TTL default and override'
 Assert-Contains $compose 'JM_SEARCH_CACHE_TTL:\s*"\$\{JM_SEARCH_CACHE_TTL:-30\}"' 'search source cache TTL default and override'
 Assert-Contains $compose 'JM_WEEKLY_LIST_CACHE_TTL:\s*"\$\{JM_WEEKLY_LIST_CACHE_TTL:-60\}"' 'weekly list source cache TTL default and override'

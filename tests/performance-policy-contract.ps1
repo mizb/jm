@@ -98,8 +98,12 @@ if (Test-Area 'RequestBudget') {
     if ($source -match '\[\s*\$ok\s*,[^\]]*\]\s*=\s*\$this->http->get') {
         throw 'Legacy tuple destructuring remains on an upstream transport call.'
     }
-    if ($source -match 'for\s*\([^\)]*JmConfig::MAX_RETRIES') {
-        throw 'Legacy domains x MAX_RETRIES loop remains in the request path.'
+    $roundMajorRetryLoops = [regex]::Matches(
+        $source,
+        '\$orderedBaseUrls\s*=\s*\$this->domainHealth->orderedDomains\(\$this->baseUrls\);\s*for\s*\(\$retry\s*=\s*0;\s*\$retry\s*<=\s*JmConfig::MAX_RETRIES;\s*\$retry\+\+\)\s*\{\s*if\s*\(\$retry\s*>\s*0\)\s*\$this->sleepBeforeTransientRetry\(\);\s*foreach\s*\(\$orderedBaseUrls\s+as\s+\$baseUrl\)'
+    )
+    if ($roundMajorRetryLoops.Count -ne 2) {
+        throw "JSON and scramble retries must both iterate retry rounds before health-ordered domains; got $($roundMajorRetryLoops.Count)."
     }
     if ($source -match '\$this->domains\b') {
         throw 'Legacy API domain field remains after base URL migration.'
@@ -1251,7 +1255,7 @@ if ($Area -in @('Verification', 'All')) {
     Assert-Matches $faultRuntime '\$cdnObservedProperties[\s\S]*?/media/photos/\[\^\|\]\+[\s\S]*?cdn-502[\s\S]*?\$cdnObservedRequestCount\s+-eq\s+2' 'CDN failover counts every media request in the scenario and requires exactly two requests'
     Assert-Matches $faultRuntime '\[string\]::IsNullOrWhiteSpace\(\$PhpPath\)\s+-or\s+-not\s+\(Test-Path\s+-LiteralPath\s+\$PhpPath' 'local fault modes reject an empty PHP path with a controlled error'
     Assert-Matches $faultRuntime '\[string\]::IsNullOrWhiteSpace\(\$ApcuExtension\)\s+-or\s+-not\s+\(Test-Path\s+-LiteralPath\s+\$ApcuExtension' 'local list-cache mode rejects an empty APCu path with a controlled error'
-    Assert-Matches $faultRuntime "Count-Key\s+\`$counts\s+'api-good\|/latest\|0\|502-then-valid'\)\s+-eq\s+3" '502 integration verifies exactly three primary attempts'
+    Assert-Matches $faultRuntime "Count-Key\s+\`$counts\s+'api-good\|/latest\|0\|502-then-valid'\)\s+-eq\s+1" '502 integration verifies exactly one first-round primary attempt'
     Assert-Matches $faultRuntime "Count-Key\s+\`$counts\s+'api-502\|/latest\|0\|502-then-valid'\)\s+-eq\s+1" '502 integration verifies exactly one secondary attempt'
     Assert-Matches $faultRuntime "Count-Key\s+\`$counts\s+'api-timeout\|/latest\|0\|502-then-valid'\)\s+-eq\s+0" '502 integration proves no third-domain attempt'
     Assert-Matches $faultRuntime '\$attempts\s+-eq\s+2[\s\S]*?429 scenario must use exactly one primary and one secondary attempt' '429 integration requires exactly two attempts'

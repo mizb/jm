@@ -23,7 +23,7 @@ declare(strict_types=1);
 
 final class JmConfig
 {
-    public const APP_VERSION    = '2026.07.17.7';
+    public const APP_VERSION    = '2026.07.17.8';
     public const VERSION        = '2.0.26';
     public const TOKEN_SECRET   = '185Hcomic3PAPP7R';
     public const TOKEN_SECRET2  = '18comicAPPContent';
@@ -2493,8 +2493,10 @@ final class JmApiClient
         $urlPath    = $path . '?' . http_build_query($params);
         $lastFailure = null;
         $budgetDenied = false;
-        foreach ($this->domainHealth->orderedDomains($this->baseUrls) as $baseUrl) {
-            for ($retry = 0; $retry <= JmConfig::MAX_RETRIES; $retry++) {
+        $orderedBaseUrls = $this->domainHealth->orderedDomains($this->baseUrls);
+        for ($retry = 0; $retry <= JmConfig::MAX_RETRIES; $retry++) {
+            if ($retry > 0) $this->sleepBeforeTransientRetry();
+            foreach ($orderedBaseUrls as $baseUrl) {
                 $remainingMs = $this->beginUpstreamAttempt();
                 if ($remainingMs === null) {
                     $budgetDenied = true;
@@ -2518,11 +2520,7 @@ final class JmApiClient
                     $category = CurlFailure::category($result->curlErrno);
                     $lastFailure = ApiFailure::network($category . ': ' . ($result->curlError !== '' ? $result->curlError : 'network error'));
                     $this->recordApiFailure($lastFailure, $baseUrl, $path, $retry, $result->status);
-                    if ($retry < JmConfig::MAX_RETRIES) {
-                        $this->sleepBeforeTransientRetry();
-                        continue;
-                    }
-                    break;
+                    continue;
                 }
 
                 $httpFailure = ApiFailure::http($result->status);
@@ -2532,18 +2530,19 @@ final class JmApiClient
                     if (!$lastFailure->shouldRetry()) {
                         throw ApiFailure::publicException($lastFailure);
                     }
-                    if ($retry < JmConfig::MAX_RETRIES) {
-                        $delayMs = $result->status === 429
-                            ? RetryAfter::delayMs($result->headers['retry-after'] ?? null, $this->context->unixTime(), $this->context->budget()->remainingMs())
-                            : 0;
+                    if ($result->status === 429) {
+                        $delayMs = RetryAfter::delayMs(
+                            $result->headers['retry-after'] ?? null,
+                            $this->context->unixTime(),
+                            $this->context->budget()->remainingMs(),
+                        );
                         if ($delayMs > 0) {
                             usleep($delayMs * 1000);
                         } else {
                             $this->sleepBeforeTransientRetry();
                         }
-                        continue;
                     }
-                    break;
+                    continue;
                 }
 
                 try {
@@ -2612,8 +2611,10 @@ final class JmApiClient
 
         $urlPath = JmConfig::ENDPOINT_SCRAMBLE . '?' . $query;
         $lastFailure = null;
-        foreach ($this->domainHealth->orderedDomains($this->baseUrls) as $baseUrl) {
-            for ($retry = 0; $retry <= JmConfig::MAX_RETRIES; $retry++) {
+        $orderedBaseUrls = $this->domainHealth->orderedDomains($this->baseUrls);
+        for ($retry = 0; $retry <= JmConfig::MAX_RETRIES; $retry++) {
+            if ($retry > 0) $this->sleepBeforeTransientRetry();
+            foreach ($orderedBaseUrls as $baseUrl) {
                 $remainingMs = $this->beginUpstreamAttempt();
                 if ($remainingMs === null) break 2;
 
@@ -2634,11 +2635,7 @@ final class JmApiClient
                     $category = CurlFailure::category($result->curlErrno);
                     $lastFailure = ApiFailure::network($category . ': ' . ($result->curlError !== '' ? $result->curlError : 'network error'));
                     $this->recordApiFailure($lastFailure, $baseUrl, JmConfig::ENDPOINT_SCRAMBLE, $retry, $result->status);
-                    if ($retry < JmConfig::MAX_RETRIES) {
-                        $this->sleepBeforeTransientRetry();
-                        continue;
-                    }
-                    break;
+                    continue;
                 }
 
                 $httpFailure = ApiFailure::http($result->status);
@@ -2649,18 +2646,19 @@ final class JmApiClient
                         $this->recordScrambleFallback($photoId, $lastFailure);
                         return (string) JmConfig::SCRAMBLE_220980;
                     }
-                    if ($retry < JmConfig::MAX_RETRIES) {
-                        $delayMs = $result->status === 429
-                            ? RetryAfter::delayMs($result->headers['retry-after'] ?? null, $this->context->unixTime(), $this->context->budget()->remainingMs())
-                            : 0;
+                    if ($result->status === 429) {
+                        $delayMs = RetryAfter::delayMs(
+                            $result->headers['retry-after'] ?? null,
+                            $this->context->unixTime(),
+                            $this->context->budget()->remainingMs(),
+                        );
                         if ($delayMs > 0) {
                             usleep($delayMs * 1000);
                         } else {
                             $this->sleepBeforeTransientRetry();
                         }
-                        continue;
                     }
-                    break;
+                    continue;
                 }
 
                 if (preg_match('/var\s+scramble_id\s*=\s*(\d+);/', $result->body, $m)) {
